@@ -78,18 +78,39 @@ async function fetchGSCData() {
   }
 }
 
-/* === 🧠 Selectează produse în funcție de GSC === */
+/* === 🧮 Calculează scor SEO pe baza GSC === */
+function calculateSEOScore(item) {
+  // formula: scor = CTR * 0.6 + (clicks / impresii * 100) * 0.4
+  const ctrScore = parseFloat(item.ctr) * 0.6;
+  const ratio = item.impressions ? (item.clicks / item.impressions) * 100 : 0;
+  const score = (ctrScore + ratio * 0.4).toFixed(2);
+  return parseFloat(score);
+}
+
+/* === 🧠 Selectează produse inteligente din GSC === */
 async function getDynamicProductsFromGSC(products, keywords) {
+  const scored = keywords.map(k => ({
+    ...k,
+    seoScore: calculateSEOScore(k)
+  }));
+
+  // sortare descrescătoare după scor
+  scored.sort((a, b) => b.seoScore - a.seoScore);
+
+  // log scoruri
+  console.table(scored.slice(0, 10));
+
+  // selectează produse legate de cuvintele cu scor mare
+  const topKeywords = scored.slice(0, 5).map(k => k.keyword);
   const filtered = products.filter(p =>
-    keywords.some(k => p.title.toLowerCase().includes(k.keyword.toLowerCase()))
+    topKeywords.some(k => p.title.toLowerCase().includes(k.toLowerCase()))
   );
 
   if (filtered.length === 0) {
-    console.warn("⚠️ Nu s-au găsit produse relevante pentru cuvintele GSC. Se selectează random.");
+    console.warn("⚠️ Nu s-au găsit produse relevante. Se aleg 5 random.");
     return products.sort(() => 0.5 - Math.random()).slice(0, 5);
   }
 
-  // selectează maxim 5 produse din rezultate
   return filtered.slice(0, 5);
 }
 
@@ -123,22 +144,14 @@ Returnează JSON valid:
 
 /* === 📈 Integrare Google Trends pentru articole === */
 async function getTrendingTopic() {
-  try {
-    const response = await fetch(
-      "https://trends.google.com/trending?geo=RO&category=0",
-    );
-    // pentru simplitate, simulăm un rezultat bazat pe tematică
-    const topics = [
-      "ambalaje biodegradabile",
-      "cutii pizza personalizate",
-      "livrare ecologică",
-      "reciclarea ambalajelor din plastic",
-      "inovații în industria alimentară"
-    ];
-    return topics[Math.floor(Math.random() * topics.length)];
-  } catch {
-    return "tendințele în ambalaje alimentare din România";
-  }
+  const topics = [
+    "ambalaje biodegradabile",
+    "cutii pizza personalizate",
+    "livrare ecologică",
+    "reciclarea ambalajelor din plastic",
+    "inovații în industria alimentară"
+  ];
+  return topics[Math.floor(Math.random() * topics.length)];
 }
 
 /* === 📰 Generează articol SEO dinamic === */
@@ -153,13 +166,7 @@ Include:
 - meta title (max 60 caractere)
 - meta descriere (max 160 caractere)
 - 3 taguri SEO relevante
-Returnează JSON valid:
-{
-  "meta_title": "...",
-  "meta_description": "...",
-  "tags": "...",
-  "content_html": "<h1>...</h1>..."
-}
+Returnează JSON valid.
 `;
 
   const response = await openai.chat.completions.create({
@@ -242,7 +249,7 @@ async function sendEmail(reportHTML) {
     await sgMail.send({
       to: EMAIL_TO,
       from: process.env.EMAIL_FROM,
-      subject: "Raport SEO Sofipex (v4)",
+      subject: "Raport SEO Sofipex (v5)",
       html: reportHTML,
     });
     console.log("📨 Raportul a fost trimis!");
@@ -253,7 +260,7 @@ async function sendEmail(reportHTML) {
 
 /* === 🚀 Funcția principală === */
 async function runSEOAutomation() {
-  console.log("🚀 Pornit Sofipex Smart SEO v4...");
+  console.log("🚀 Pornit Sofipex Smart SEO v5...");
 
   const gscKeywords = await fetchGSCData();
   const products = await getProducts();
@@ -262,9 +269,6 @@ async function runSEOAutomation() {
   let raport = `<h2>📅 Raport zilnic Sofipex Smart SEO</h2><ul>`;
 
   for (const p of selected) {
-    const oldTitle = p.metafields_global_title_tag || "(none)";
-    const oldDesc = p.metafields_global_description_tag || "(none)";
-
     const seo = await generateSEOContent(p.title, p.body_html?.replace(/<[^>]+>/g, "") || "");
     await updateProduct(p.id, {
       id: p.id,
@@ -273,15 +277,7 @@ async function runSEOAutomation() {
       metafields_global_title_tag: seo.meta_title,
       metafields_global_description_tag: seo.meta_description,
     });
-
-    raport += `
-      <li>
-        <b>${p.title}</b><br>
-        🔹 Titlu vechi: ${oldTitle}<br>
-        🔹 Titlu nou: ${seo.meta_title}<br>
-        🔹 Descriere veche: ${oldDesc}<br>
-        🔹 Descriere nouă: ${seo.meta_description}
-      </li>`;
+    raport += `<li>✅ ${p.title} — actualizat SEO</li>`;
   }
 
   const article = await generateBlogArticleFromTrends();
@@ -302,5 +298,5 @@ runSEOAutomation();
 
 /* === 🌐 Fix Render (port binding) === */
 const app = express();
-app.get("/", (req, res) => res.send("✅ Sofipex Smart SEO v4 rulează cu succes!"));
+app.get("/", (req, res) => res.send("✅ Sofipex Smart SEO v5 rulează cu succes!"));
 app.listen(process.env.PORT || 3000, () => console.log("🌐 Server activ pe portul 3000"));
