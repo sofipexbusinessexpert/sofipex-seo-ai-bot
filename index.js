@@ -298,3 +298,8 @@ async function runSEOAutomation() {
 /* === ⏰ Programare zilnică (08:00 România = 06:00 UTC) === */
 cron.schedule("0 6 * * *", runSEOAutomation);
 runSEOAutomation();
+
+/* === 🌐 Fix Render (port binding) === */
+const app = express();
+app.get("/", (req, res) => res.send("✅ Sofipex Smart SEO v4 rulează cu succes!"));
+app.listen(process.env.PORT || 3000, () => console.log("🌐 Server activ pe portul 3000"));
