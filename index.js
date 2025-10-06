@@ -155,4 +155,71 @@ async function updateSheet(gscData, optimized, articleTitle) {
     const sheets = google.sheets({ version: "v4", auth });
     const values = gscData.map(r => [r.date, r.clicks, r.impressions, r.ctr]);
     await sheets.spreadsheets.values.append({
-      spreadsh
+      spreadsheetId: SHEETS_ID,
+      range: "Sheet1!A:D",
+      valueInputOption: "USER_ENTERED",
+      resource: { values },
+    });
+
+    // Creează grafic (dacă nu există deja)
+    const chartRequest = {
+      addChart: {
+        chart: {
+          spec: {
+            title: "Evoluția Clickurilor și Afișărilor",
+            basicChart: {
+              chartType: "LINE",
+              legendPosition: "BOTTOM_LEGEND",
+              axis: [
+                { position: "BOTTOM_AXIS", title: "Data" },
+                { position: "LEFT_AXIS", title: "Valori" }
+              ],
+              domains: [{ domain: { sourceRange: { sources: [{ sheetId: 0, startRowIndex: 0, endRowIndex: gscData.length, startColumnIndex: 0, endColumnIndex: 1 }] } } }],
+              series: [
+                { series: { sourceRange: { sources: [{ sheetId: 0, startRowIndex: 0, endRowIndex: gscData.length, startColumnIndex: 1, endColumnIndex: 2 }] } }, targetAxis: "LEFT_AXIS" },
+                { series: { sourceRange: { sources: [{ sheetId: 0, startRowIndex: 0, endRowIndex: gscData.length, startColumnIndex: 2, endColumnIndex: 3 }] } }, targetAxis: "LEFT_AXIS" }
+              ],
+            }
+          },
+          position: { overlayPosition: { anchorCell: { sheetId: 0, rowIndex: 0, columnIndex: 6 } } }
+        }
+      }
+    };
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SHEETS_ID,
+      requestBody: { requests: [chartRequest] },
+    });
+
+    console.log("📈 Grafic actualizat în Google Sheets!");
+  } catch (err) {
+    console.error("❌ Eroare Google Sheets:", err.message);
+  }
+}
+
+/* === Funcția principală === */
+async function runSEOAutomation() {
+  console.log("🚀 Pornit audit SEO automat Sofipex...");
+  const gscData = await fetchGSCData();
+
+  const products = await getProducts();
+  const optimized = products.slice(0, 5).map(p => p.title);
+  const blog = await generateBlogArticle();
+  const title = blog.split("\n")[0].replace(/<[^>]+>/g, "").trim();
+
+  let raport = `<h2>📅 Raport zilnic SEO Sofipex</h2>
+  <p>Produse optimizate: ${optimized.join(", ")}</p>
+  <p>Articol generat: <b>${title}</b></p>
+  <h3>📊 Date GSC:</h3>
+  <p>${gscData.map(r => `${r.date}: ${r.clicks} clickuri / ${r.impressions} afișări (CTR ${r.ctr}%)`).join("<br>")}</p>`;
+
+  await sendEmail(raport);
+  await updateSheet(gscData, optimized, title);
+
+  console.log("✅ Raport complet trimis și grafic actualizat!");
+  process.exit(0);
+}
+
+/* === Rulează zilnic la 08:00 România === */
+cron.schedule("0 6 * * *", runSEOAutomation);
+runSEOAutomation();
