@@ -238,8 +238,7 @@ cron.schedule("0 6 * * *", runSEOAutomation);
 runSEOAutomation();
 
 /* === Server permanent pentru Render === */
+import express from "express";
 const app = express();
-app.get("/", (req, res) => res.send("✅ Sofipex SEO bot rulează continuu"));
-app.listen(process.env.PORT || 3000, () =>
-  console.log("🌐 Server Render activ - SEO bot online permanent")
-);
+app.get("/", (req, res) => res.send("✅ Sofipex SEO Bot este online permanent!"));
+app.listen(process.env.PORT || 3000, () => console.log("🌐 Server activ pe Render"));
