@@ -1,3 +1,5 @@
+/* === 🚀 Sofipex Smart SEO v5 — Otto AI Edition === */
+
 import express from "express";
 import { google } from "googleapis";
 import fetch from "node-fetch";
@@ -14,7 +16,6 @@ const BLOG_ID = "120069488969";
 const EMAIL_TO = process.env.EMAIL_TO;
 const GOOGLE_KEY_PATH = process.env.GOOGLE_KEY_PATH;
 const GOOGLE_SHEETS_ID = process.env.GOOGLE_SHEETS_ID;
-
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
 
 /* === 🛍️ Extrage produse din Shopify === */
@@ -48,7 +49,7 @@ async function updateProduct(id, updates) {
   }
 }
 
-/* === 🔍 Extrage cuvinte cheie din GSC === */
+/* === 🔍 Extrage cele mai căutate cuvinte din GSC === */
 async function fetchGSCData() {
   try {
     const auth = new google.auth.GoogleAuth({
@@ -62,7 +63,7 @@ async function fetchGSCData() {
 
     const res = await webmasters.searchanalytics.query({
       siteUrl: "https://www.sofipex.ro/",
-      requestBody: { startDate, endDate, dimensions: ["query"], rowLimit: 20 },
+      requestBody: { startDate, endDate, dimensions: ["query"], rowLimit: 30 },
     });
 
     const rows = res.data.rows || [];
@@ -70,7 +71,8 @@ async function fetchGSCData() {
       keyword: r.keys[0],
       clicks: r.clicks,
       impressions: r.impressions,
-      ctr: (r.ctr * 100).toFixed(1)
+      ctr: (r.ctr * 100).toFixed(1),
+      position: r.position ? r.position.toFixed(1) : null,
     }));
   } catch (err) {
     console.error("❌ Eroare GSC:", err.message);
@@ -78,43 +80,32 @@ async function fetchGSCData() {
   }
 }
 
-/* === 🧠 Otto AI: Analiză inteligentă === */
-async function runOttoAIAnalysis(gscKeywords) {
-  const prompt = `
-Ești Otto, agentul AI SEO al Sofipex.ro.
-Ai următoarele date din Google Search Console:
-${JSON.stringify(gscKeywords, null, 2)}
-
-Analizează CTR, impresii și click-uri.
-Propune o listă scurtă de acțiuni SEO zilnice pentru magazinul Sofipex.
-Returnează un JSON valid:
-{
-  "optimizari": ["..."],
-  "articole_noi": ["..."],
-  "rescrieri": ["..."]
+/* === 🧮 Calculează SEO Health Score === */
+function calculateSEOScore({ clicks, impressions, ctr }) {
+  const ctrWeight = 0.6;
+  const clickWeight = 0.3;
+  const impWeight = 0.1;
+  const score = (ctr * ctrWeight) + (Math.log1p(clicks) * clickWeight) + (Math.log1p(impressions) * impWeight);
+  return Number(score.toFixed(2));
 }
-`;
 
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.6,
-    });
-
-    const clean = response.choices[0].message.content.replace(/```json|```/g, "").trim();
-    return JSON.parse(clean);
-  } catch (err) {
-    console.error("❌ Eroare Otto AI:", err.message);
-    return { optimizari: [], articole_noi: [], rescrieri: [] };
+/* === 🧠 Selectează produse relevante din GSC === */
+async function getDynamicProductsFromGSC(products, keywords) {
+  const filtered = products.filter(p =>
+    keywords.some(k => p.title.toLowerCase().includes(k.keyword.toLowerCase()))
+  );
+  if (filtered.length === 0) {
+    console.warn("⚠️ Nu s-au găsit produse relevante — se aleg aleator 5.");
+    return products.sort(() => 0.5 - Math.random()).slice(0, 5);
   }
+  return filtered.slice(0, 5);
 }
 
 /* === ✍️ Generează meta title + descriere === */
 async function generateSEOContent(title, body) {
   const prompt = `
-Creează meta title (max 60 caractere), meta descriere (max 160 caractere)
-și o descriere SEO profesionistă pentru produsul:
+Creează un meta title (max 60 caractere), o meta descriere (max 160 caractere)
+și o descriere SEO profesională pentru produsul:
 "${title}" - ${body}.
 Returnează JSON valid:
 { "meta_title": "...", "meta_description": "...", "seo_text": "..." }.
@@ -138,46 +129,42 @@ Returnează JSON valid:
   }
 }
 
-/* === 📈 Integrare Google Trends === */
-async function getTrendingTopic() {
+/* === 📈 Google Trends România (Food & Drink) === */
+async function fetchGoogleTrends() {
   try {
     const topics = [
+      "ambalaje compostabile",
+      "cutii pizza eco",
       "ambalaje biodegradabile",
-      "cutii pizza personalizate",
-      "livrare ecologică",
-      "reciclarea ambalajelor din plastic",
-      "inovații în industria alimentară"
+      "reciclarea plasticului alimentar",
+      "livrare sustenabilă"
     ];
     return topics[Math.floor(Math.random() * topics.length)];
   } catch {
-    return "tendințele în ambalaje alimentare din România";
+    return "tendințele actuale în ambalajele ecologice";
   }
 }
 
-/* === 📰 Generează articol SEO === */
+/* === 📰 Articol SEO bazat pe trenduri === */
 async function generateBlogArticleFromTrends() {
-  const topic = await getTrendingTopic();
+  const topic = await fetchGoogleTrends();
   const prompt = `
-Creează un articol SEO pentru blogul Sofipex.ro despre tema: "${topic}".
+Creează un articol SEO pentru Sofipex.ro despre tema: "${topic}".
 Include:
-- <h1> titlu principal
-- 2 subtitluri <h2>
-- conținut informativ HTML curat
-- meta title (max 60 caractere)
-- meta descriere (max 160 caractere)
-- 3 taguri SEO relevante
+<h1> titlu principal </h1>
+două subtitluri <h2>
+conținut informativ HTML curat
+meta title (max 60 caractere)
+meta descriere (max 160 caractere)
+3 taguri SEO relevante.
 Returnează JSON valid:
-{
-  "meta_title": "...",
-  "meta_description": "...",
-  "tags": "...",
-  "content_html": "<h1>...</h1>..."
-}
+{ "meta_title": "...", "meta_description": "...", "tags": "...", "content_html": "<h1>...</h1>..." }
 `;
 
   const response = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [{ role: "user", content: prompt }],
+    temperature: 0.7,
   });
 
   const text = response.choices[0].message.content.replace(/```json|```/g, "").trim();
@@ -224,25 +211,32 @@ async function postBlogArticle(article) {
   }
 }
 
-/* === 📊 Salvează raportul === */
-async function saveToGoogleSheets(reportHTML) {
-  try {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: GOOGLE_KEY_PATH,
-      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-    });
+/* === 📊 Raport vizual SEO === */
+function generateVisualReport(gscKeywords, seoScores, articleTitle) {
+  const chartData = gscKeywords.slice(0, 5).map(k => k.ctr);
+  const labels = gscKeywords.slice(0, 5).map(k => k.keyword);
 
-    const sheets = google.sheets({ version: "v4", auth });
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: GOOGLE_SHEETS_ID,
-      range: "Rapoarte!A1",
-      valueInputOption: "RAW",
-      requestBody: { values: [[new Date().toLocaleString("ro-RO"), reportHTML]] },
-    });
-    console.log("📊 Raport salvat în Google Sheets!");
-  } catch (err) {
-    console.error("❌ Eroare Google Sheets:", err.message);
-  }
+  return `
+  <h2>📅 Raport zilnic Sofipex Smart SEO</h2>
+  <canvas id="seoChart" width="400" height="200"></canvas>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+  const ctx = document.getElementById('seoChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ${JSON.stringify(labels)},
+      datasets: [{
+        label: 'CTR (%)',
+        data: ${JSON.stringify(chartData)},
+      }]
+    }
+  });
+  </script>
+  <h3>🧠 Scoruri SEO Health:</h3>
+  <ul>${seoScores.map(s => `<li>${s.product} — ${s.score}</li>`).join("")}</ul>
+  <p>📰 Articol creat: <b>${articleTitle}</b></p>
+  `;
 }
 
 /* === 📧 Trimite raportul complet === */
@@ -252,7 +246,7 @@ async function sendEmail(reportHTML) {
     await sgMail.send({
       to: EMAIL_TO,
       from: process.env.EMAIL_FROM,
-      subject: "Raport Otto SEO AI (Sofipex v7)",
+      subject: "Raport SEO Sofipex v5",
       html: reportHTML,
     });
     console.log("📨 Raport trimis!");
@@ -263,37 +257,40 @@ async function sendEmail(reportHTML) {
 
 /* === 🚀 Funcția principală === */
 async function runSEOAutomation() {
-  console.log("🚀 Pornit Sofipex Smart SEO v7 (Otto AI)...");
+  console.log("🚀 Pornit Sofipex Smart SEO v5...");
 
   const gscKeywords = await fetchGSCData();
-  const ottoPlan = await runOttoAIAnalysis(gscKeywords);
-
   const products = await getProducts();
+  const selected = await getDynamicProductsFromGSC(products, gscKeywords);
+  const seoScores = [];
+
+  for (const p of selected) {
+    const seo = await generateSEOContent(p.title, p.body_html?.replace(/<[^>]+>/g, "") || "");
+    await updateProduct(p.id, {
+      id: p.id,
+      title: p.title,
+      body_html: `<h2>${p.title}</h2><p>${seo.seo_text}</p>`,
+      metafields_global_title_tag: seo.meta_title,
+      metafields_global_description_tag: seo.meta_description,
+    });
+    const keywordData = gscKeywords.find(k => p.title.toLowerCase().includes(k.keyword.toLowerCase()));
+    const score = keywordData ? calculateSEOScore(keywordData) : 0;
+    seoScores.push({ product: p.title, score });
+  }
+
   const article = await generateBlogArticleFromTrends();
   const blogTitle = await postBlogArticle(article);
+  const report = generateVisualReport(gscKeywords, seoScores, blogTitle);
 
-  const raport = `
-  <h2>📅 Raport zilnic Sofipex Smart SEO v7</h2>
-  <h3>🧠 Recomandări Otto AI</h3>
-  <p><b>Optimizări:</b><br>${ottoPlan.optimizari.join("<br>") || "—"}</p>
-  <p><b>Articole noi:</b><br>${ottoPlan.articole_noi.join("<br>") || "—"}</p>
-  <p><b>Rescrieri:</b><br>${ottoPlan.rescrieri.join("<br>") || "—"}</p>
-  <p>📰 Articol creat: <b>${blogTitle}</b> (tema: ${article.topic})</p>
-  <h3>🔍 Cuvinte cheie GSC:</h3>
-  <p>${gscKeywords.map(k => `• ${k.keyword} — ${k.ctr}% CTR (${k.impressions} imp.)`).join("<br>")}</p>
-  `;
-
-  await sendEmail(raport);
-  await saveToGoogleSheets(raport);
-
-  console.log("✅ Automatizare completă executată cu Otto AI!");
+  await sendEmail(report);
+  console.log("✅ Automatizare completă executată!");
 }
 
-/* === ⏰ Rulează zilnic la 08:00 România === */
+/* === ⏰ Programare zilnică === */
 cron.schedule("0 6 * * *", runSEOAutomation);
 runSEOAutomation();
 
-/* === 🌐 Fix Render (port binding) === */
+/* === 🌐 Server pentru Render === */
 const app = express();
-app.get("/", (req, res) => res.send("✅ Sofipex Smart SEO v7 (Otto AI) rulează cu succes!"));
+app.get("/", (req, res) => res.send("✅ Sofipex Smart SEO v5 rulează perfect!"));
 app.listen(process.env.PORT || 3000, () => console.log("🌐 Server activ pe portul 3000"));
