@@ -1,16 +1,14 @@
-import express from "express";
 import { google } from "googleapis";
 import fetch from "node-fetch";
 import OpenAI from "openai";
 import cron from "node-cron";
 import 'dotenv/config';
 import sgMail from "@sendgrid/mail";
-import fs from "fs";
 
 /* === Variabile de mediu === */
 const SHOPIFY_API = process.env.SHOPIFY_API;
 const OPENAI_KEY = process.env.OPENAI_KEY;
-const SHOP_NAME = "sofipex";
+const SHOP_NAME = process.env.SHOP_NAME || "sofipex";
 const BLOG_ID = "120069488969";
 const EMAIL_TO = process.env.EMAIL_TO;
 
@@ -18,23 +16,38 @@ const openai = new OpenAI({ apiKey: OPENAI_KEY });
 
 /* === Extrage produse din Shopify === */
 async function getProducts() {
-  const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-07/products.json`, {
-    headers: { "X-Shopify-Access-Token": SHOPIFY_API },
-  });
-  const data = await res.json();
-  return data.products || [];
+  try {
+    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products.json`, {
+      headers: { "X-Shopify-Access-Token": SHOPIFY_API },
+    });
+    const data = await res.json();
+    if (!data.products) {
+      console.warn("⚠️ Shopify nu a returnat produse valide!");
+      return [];
+    }
+    console.log(`🛍️ Produse Shopify găsite: ${data.products.length}`);
+    return data.products;
+  } catch (err) {
+    console.error("❌ Eroare la extragerea produselor Shopify:", err.message);
+    return [];
+  }
 }
 
 /* === Actualizează produs === */
 async function updateProduct(id, updates) {
-  await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-07/products/${id}.json`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Access-Token": SHOPIFY_API,
-    },
-    body: JSON.stringify({ product: updates }),
-  });
+  try {
+    await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products/${id}.json`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": SHOPIFY_API,
+      },
+      body: JSON.stringify({ product: updates }),
+    });
+    console.log(`✅ Produs actualizat: ${updates.title}`);
+  } catch (err) {
+    console.error(`❌ Eroare la actualizarea produsului ${id}:`, err.message);
+  }
 }
 
 /* === Generează meta title + descriere === */
@@ -55,11 +68,9 @@ Returnează un JSON valid cu câmpurile:
     });
 
     let raw = response.choices[0].message.content
-      .replace(/^[^\{]*/, "")
+      .replace(/^[^{]*/, "")
       .replace(/[`´‘’“”]/g, '"')
       .replace(/\n/g, " ")
-      .replace(/\r/g, " ")
-      .replace(/\s+$/g, "")
       .trim();
 
     const lastBrace = raw.lastIndexOf("}");
@@ -67,27 +78,27 @@ Returnează un JSON valid cu câmpurile:
 
     return JSON.parse(raw);
   } catch (err) {
-    console.warn("⚠️ Eroare OpenAI sau JSON invalid:", err.message);
+    console.warn("⚠️ Eroare OpenAI/JSON:", err.message);
     return {
       meta_title: title,
-      meta_description: "Optimizare automată SEO pentru produs.",
+      meta_description: "Optimizare SEO automată pentru produs.",
       seo_text: body || "Descriere SEO generată automat.",
     };
   }
 }
 
-/* === Generează articol SEO curat === */
+/* === Generează articol SEO de blog === */
 async function generateBlogArticle() {
   const prompt = `
-Scrie un articol SEO de blog pentru site-ul Sofipex.ro despre ambalaje biodegradabile, cutii pizza, caserole etc.
+Scrie un articol SEO complet pentru Sofipex.ro despre ambalaje biodegradabile, cutii pizza și caserole.
 Include:
 - titlu principal (H1)
 - 2 subtitluri (H2)
-- conținut profesional HTML complet (fără blocuri de cod sau backticks)
+- conținut profesional HTML curat
 - meta title (max 60 caractere)
 - meta descriere (max 160 caractere)
 - 3 taguri SEO relevante
-Răspunde exclusiv cu HTML complet curat (fără \`\`\` sau alte delimitări).
+Răspunde exclusiv în format HTML.
 `;
 
   const response = await openai.chat.completions.create({
@@ -95,19 +106,15 @@ Răspunde exclusiv cu HTML complet curat (fără \`\`\` sau alte delimitări).
     messages: [{ role: "user", content: prompt }],
   });
 
-  let content = response.choices[0].message.content
-    .replace(/```html|```/g, "")
-    .trim();
-
-  return content;
+  return response.choices[0].message.content.replace(/```html|```/g, "").trim();
 }
 
-/* === Postează articolul ca draft pe Shopify === */
+/* === Postează articolul ca draft === */
 async function postBlogArticle(body) {
   const titleMatch = body.match(/<h1[^>]*>(.*?)<\/h1>/i);
   const title = titleMatch ? titleMatch[1].trim() : "Articol SEO Sofipex";
 
-  await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-07/blogs/${BLOG_ID}/articles.json`, {
+  await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/blogs/${BLOG_ID}/articles.json`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -118,7 +125,7 @@ async function postBlogArticle(body) {
         title,
         body_html: body,
         author: "Sofipex SEO AI",
-        tags: "SEO, ambalaje, articole ecologice",
+        tags: "SEO, ambalaje, ecologic",
         published: false,
       },
     }),
@@ -141,12 +148,12 @@ async function fetchGSCData() {
     const startDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
 
     const res = await webmasters.searchanalytics.query({
-      siteUrl: "https://www.sofipex.ro/",
+      siteUrl: "https://sofipex.ro",
       requestBody: { startDate, endDate, dimensions: ["query"], rowLimit: 10 },
     });
 
     const rows = res.data.rows || [];
-    if (rows.length === 0) return "Nu s-au găsit cuvinte cheie recente.";
+    if (!rows.length) return "Nu s-au găsit cuvinte cheie recente.";
 
     return rows
       .map((r) => `• ${r.keys[0]} — ${r.clicks} clickuri, ${r.impressions} afișări, CTR ${(r.ctr * 100).toFixed(1)}%`)
@@ -172,9 +179,7 @@ async function saveToGoogleSheets(reportText) {
       spreadsheetId,
       range: "Rapoarte!A1",
       valueInputOption: "RAW",
-      requestBody: {
-        values: [[new Date().toLocaleString("ro-RO"), reportText]],
-      },
+      requestBody: { values: [[new Date().toLocaleString("ro-RO"), reportText]] },
     });
 
     console.log("📊 Raport salvat în Google Sheets!");
@@ -183,7 +188,7 @@ async function saveToGoogleSheets(reportText) {
   }
 }
 
-/* === Trimite raportul zilnic prin SendGrid === */
+/* === Trimite raportul zilnic === */
 async function sendEmail(report) {
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
   const msg = {
@@ -197,37 +202,44 @@ async function sendEmail(report) {
     await sgMail.send(msg);
     console.log("📨 Raportul a fost trimis prin SendGrid!");
   } catch (error) {
-    console.error("❌ Eroare la trimiterea e-mailului:", error.response?.body || error.message);
+    console.error("❌ Eroare trimitere e-mail:", error.response?.body || error.message);
   }
 }
 
 /* === Funcția principală === */
 async function runSEOAutomation() {
   console.log("🚀 Pornit audit SEO automat Sofipex...");
+
   const products = await getProducts();
   let raport = "<h2>📅 Raport zilnic SEO Sofipex</h2><ul>";
 
-  for (const product of products.slice(0, 5)) {
-    const { meta_title, meta_description, seo_text } = await generateSEOContent(
-      product.title,
-      product.body_html?.replace(/<[^>]+>/g, "") || ""
-    );
-    await updateProduct(product.id, {
-      id: product.id,
-      title: product.title,
-      body_html: `<h2>${product.title}</h2><p>${seo_text}</p>`,
-      metafields_global_title_tag: meta_title,
-      metafields_global_description_tag: meta_description,
-    });
-    raport += `<li>✅ ${product.title}</li>`;
+  if (!products.length) {
+    raport += "<li>⚠️ Nu s-au găsit produse Shopify pentru actualizare.</li>";
+  } else {
+    for (const product of products.slice(0, 5)) {
+      const { meta_title, meta_description, seo_text } = await generateSEOContent(
+        product.title,
+        product.body_html?.replace(/<[^>]+>/g, "") || ""
+      );
+
+      await updateProduct(product.id, {
+        id: product.id,
+        title: product.title,
+        body_html: `<h2>${product.title}</h2><p>${seo_text}</p>`,
+        metafields_global_title_tag: meta_title,
+        metafields_global_description_tag: meta_description,
+      });
+
+      raport += `<li>✅ ${product.title} – optimizat SEO.</li>`;
+    }
   }
 
   const blogBody = await generateBlogArticle();
   const blogTitle = await postBlogArticle(blogBody);
-  raport += `</ul><p>📰 Articol creat: <b>${blogTitle}</b> (draft)</p>`;
+  raport += `</ul><p>📰 Articol nou: <b>${blogTitle}</b> (draft)</p>`;
 
   const gscData = await fetchGSCData();
-  raport += `<h3>🔍 Cuvinte cheie Google Search Console (ultimele 5 zile):</h3><p>${gscData}</p>`;
+  raport += `<h3>🔍 Cuvinte cheie Google Search Console:</h3><p>${gscData}</p>`;
 
   await sendEmail(raport);
   await saveToGoogleSheets(raport);
@@ -238,8 +250,3 @@ async function runSEOAutomation() {
 /* === Programare automată (08:00 România = 06:00 UTC) === */
 cron.schedule("0 6 * * *", runSEOAutomation);
 runSEOAutomation();
-
-/* === Server Express pentru „keep alive” pe Render === */
-const app = express();
-app.get("/", (req, res) => res.send("✅ Sofipex SEO Bot rulează permanent pe Render!"));
-app.listen(process.env.PORT || 3000, () => console.log("🌐 Server activ pe portul 3000"));
