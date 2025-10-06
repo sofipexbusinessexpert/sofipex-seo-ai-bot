@@ -45,14 +45,20 @@ Scrie un meta title (max 60 caractere), o meta descriere (max 160 caractere)
 Returnează un JSON valid cu câmpurile:
 { "meta_title": "...", "meta_description": "...", "seo_text": "..." }.
 `;
+
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
     });
 
-    const raw = response.choices[0].message.content.trim();
-    return JSON.parse(raw);
+    let raw = response.choices[0].message.content.trim();
+
+    // Curățare de text extra (backticks, etc.)
+    raw = raw.replace(/```json|```|“|”|‘|’/g, '"').trim();
+
+    const parsed = JSON.parse(raw);
+    return parsed;
   } catch (err) {
     console.warn("⚠️ Eroare OpenAI sau JSON invalid:", err.message);
     return { meta_title: title, meta_description: "", seo_text: body };
@@ -151,11 +157,13 @@ async function saveToGoogleSheets(reportText) {
     const sheets = google.sheets({ version: "v4", auth });
     const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
 
+    if (!spreadsheetId) throw new Error("❌ Variabila GOOGLE_SHEETS_ID lipsește!");
+
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: "Rapoarte!A:A",
+      range: "Rapoarte!A:B",
       valueInputOption: "RAW",
-      requestBody: { values: [[new Date().toISOString(), reportText]] },
+      requestBody: { values: [[new Date().toLocaleString("ro-RO"), reportText]] },
     });
 
     console.log("📊 Raport salvat în Google Sheets!");
@@ -214,7 +222,7 @@ async function runSEOAutomation() {
   await saveToGoogleSheets(raport);
 
   console.log("✅ Raport trimis și automatizare completă executată!");
-  process.exit(0);
+  // ❌ nu mai facem process.exit(0) → lăsăm aplicația să ruleze
 }
 
 /* === Programare automată (08:00 România = 06:00 UTC) === */
