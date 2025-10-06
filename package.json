@@ -4,11 +4,14 @@
   "main": "index.js",
   "type": "module",
   "dependencies": {
+    "express": "^4.19.2",
+    "googleapis": "^141.0.0",
     "node-fetch": "^3.3.2",
-    "dotenv": "^16.3.1",
-    "openai": "^4.5.0",
-    "node-cron": "^3.0.3",
-    "@sendgrid/mail": "^7.7.0",
-    "googleapis": "^131.0.0"
+    "openai": "^4.30.0",
+    "dotenv": "^16.4.5",
+    "@sendgrid/mail": "^8.1.0",
+    "cron": "^3.1.7"
+}
+
   }
 }
