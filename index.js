@@ -1,8 +1,8 @@
 import fetch from "node-fetch";
 import OpenAI from "openai";
 import cron from "node-cron";
-import nodemailer from "nodemailer";
 import 'dotenv/config';
+import sgMail from "@sendgrid/mail";
 
 const SHOPIFY_API = process.env.SHOPIFY_API;
 const OPENAI_KEY = process.env.OPENAI_KEY;
