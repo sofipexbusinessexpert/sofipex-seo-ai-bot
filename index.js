@@ -84,46 +84,89 @@ Returnează un JSON valid:
 async function generateBlogArticle() {
   const prompt = `
 Scrie un articol SEO complet pentru Sofipex.ro despre tendințele actuale din industria ambalajelor alimentare din România.
-Include:
-- titlu (H1)
-- 2 subtitluri (H2)
-- conținut HTML curat
-- meta title, meta descriere
+Include următoarele:
+- <h1> titlu principal
+- <h2> și <h3> pentru subtitluri
+- 2-3 paragrafe descriptive
 - 3 taguri SEO relevante
+- un meta title (max 60 caractere)
+- o meta descriere (max 160 caractere)
+- totul în format HTML valid
+
+Returnează un JSON valid cu următoarele câmpuri:
+{
+  "meta_title": "...",
+  "meta_description": "...",
+  "tags": "...",
+  "content_html": "<h1>...</h1> ... restul articolului ..."
+}
 `;
 
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [{ role: "user", content: prompt }],
-  });
 
-  return response.choices[0].message.content.replace(/```html|```/g, "").trim();
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.6,
+    });
+
+    let text = response.choices[0].message.content;
+
+    // Curățare conținut JSON
+    text = text.replace(/```json|```/g, "").trim();
+
+    const article = JSON.parse(text);
+
+    return {
+      title: article.meta_title || "Articol SEO Sofipex",
+      meta_title: article.meta_title || "Optimizare SEO Sofipex",
+      meta_description:
+        article.meta_description || "Articol SEO despre ambalaje ecologice și tendințe de sustenabilitate.",
+      tags: article.tags || "ambalaje, eco, sustenabil",
+      body_html: article.content_html,
+    };
+  } catch (err) {
+    console.error("❌ Eroare la generarea articolului SEO:", err.message);
+    return {
+      title: "Articol SEO Sofipex",
+      meta_title: "Articol SEO Sofipex",
+      meta_description: "Descriere SEO generată automat pentru blog Sofipex.",
+      tags: "SEO, ambalaje, ecologic",
+      body_html: "<h1>Articol generat automat</h1><p>Conținut indisponibil momentan.</p>",
+    };
+  }
 }
 
 /* === ✍️ Postează articolul pe Shopify Blog === */
-async function postBlogArticle(body) {
-  const titleMatch = body.match(/<h1[^>]*>(.*?)<\/h1>/i);
-  const title = titleMatch ? titleMatch[1].trim() : "Articol SEO Sofipex";
-
-  await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/blogs/${BLOG_ID}/articles.json`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Access-Token": SHOPIFY_API,
-    },
-    body: JSON.stringify({
-      article: {
-        title,
-        body_html: body,
-        author: "Sofipex SEO AI",
-        tags: "SEO, ambalaje, ecologic",
-        published: false,
+async function postBlogArticle(article) {
+  try {
+    await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/blogs/${BLOG_ID}/articles.json`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": SHOPIFY_API,
       },
-    }),
-  });
+      body: JSON.stringify({
+        article: {
+          title: article.title,
+          body_html: article.body_html,
+          author: "Sofipex SEO AI",
+          tags: article.tags,
+          published: false,
+          metafields: [
+            { key: "title_tag", namespace: "global", value: article.meta_title, type: "single_line_text_field" },
+            { key: "description_tag", namespace: "global", value: article.meta_description, type: "single_line_text_field" },
+          ],
+        },
+      }),
+    });
 
-  console.log(`📰 Articol creat: ${title}`);
-  return title;
+    console.log(`📰 Articol creat și optimizat SEO: ${article.title}`);
+    return article.title;
+  } catch (err) {
+    console.error("❌ Eroare la publicarea articolului:", err.message);
+    return "Eroare la creare articol";
+  }
 }
 
 /* === 🔍 Date Google Search Console === */
