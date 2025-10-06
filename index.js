@@ -5,6 +5,7 @@ import OpenAI from "openai";
 import cron from "node-cron";
 import 'dotenv/config';
 import sgMail from "@sendgrid/mail";
+import express from "express";
 
 /* === Variabile de mediu === */
 const SHOPIFY_API = process.env.SHOPIFY_API;
@@ -54,14 +55,11 @@ Returnează un JSON valid cu câmpurile:
     });
 
     let raw = response.choices[0].message.content
-      .replace(/^[^\{]*/, "")            // elimină textul înainte de "{"
-      .replace(/[`´‘’“”]/g, '"')         // normalizează ghilimelele
-      .replace(/\n/g, " ")               // elimină newline-uri
-      .replace(/\r/g, " ")               // elimină carriage return
-      .replace(/\s+$/g, "")              // elimină spațiile de la final
+      .replace(/^[^\{]*/, "")
+      .replace(/[`´‘’“”]/g, '"')
+      .replace(/\n|\r/g, " ")
       .trim();
 
-    // ✨ elimină orice text după ultima acoladă '}'
     const lastBrace = raw.lastIndexOf("}");
     if (lastBrace !== -1) raw = raw.substring(0, lastBrace + 1);
 
@@ -75,7 +73,6 @@ Returnează un JSON valid cu câmpurile:
     };
   }
 }
-
 
 /* === Generează articol SEO curat === */
 async function generateBlogArticle() {
@@ -96,11 +93,9 @@ Răspunde exclusiv cu HTML complet curat (fără \`\`\` sau alte delimitări).
     messages: [{ role: "user", content: prompt }],
   });
 
-  let content = response.choices[0].message.content
+  return response.choices[0].message.content
     .replace(/```html|```/g, "")
     .trim();
-
-  return content;
 }
 
 /* === Postează articolul ca draft pe Shopify === */
@@ -171,7 +166,7 @@ async function saveToGoogleSheets(reportText) {
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: "Rapoarte!A1", // ✅ Fix: trebuie o celulă de start validă
+      range: "Rapoarte!A1",
       valueInputOption: "RAW",
       requestBody: {
         values: [[new Date().toLocaleString("ro-RO"), reportText]],
@@ -183,7 +178,6 @@ async function saveToGoogleSheets(reportText) {
     console.error("❌ Eroare Google Sheets:", err.message);
   }
 }
-
 
 /* === Trimite raportul zilnic prin SendGrid === */
 async function sendEmail(report) {
@@ -235,9 +229,17 @@ async function runSEOAutomation() {
   await saveToGoogleSheets(raport);
 
   console.log("✅ Raport trimis și automatizare completă executată!");
-  // ❌ nu mai facem process.exit(0) → lăsăm aplicația să ruleze
 }
 
-/* === Programare automată (08:00 România = 06:00 UTC) === */
+/* === Rulează zilnic la 08:00 România (06:00 UTC) === */
 cron.schedule("0 6 * * *", runSEOAutomation);
+
+/* === Pornire inițială === */
 runSEOAutomation();
+
+/* === Server permanent pentru Render === */
+const app = express();
+app.get("/", (req, res) => res.send("✅ Sofipex SEO bot rulează continuu"));
+app.listen(process.env.PORT || 3000, () =>
+  console.log("🌐 Server Render activ - SEO bot online permanent")
+);
