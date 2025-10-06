@@ -1,20 +1,19 @@
 {
   "name": "sofipex-seo-ai-bot",
   "version": "1.0.0",
-  "description": "Automatizare SEO pentru Sofipex - integrat cu Shopify, Google Search Console și SendGrid.",
-  "type": "module",
+  "description": "Audit SEO automat pentru Sofipex (Shopify + GSC + SendGrid)",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "googleapis": "^141.0.0",
-    "node-fetch": "^3.3.2",
-    "openai": "^4.30.0",
-    "dotenv": "^16.4.5",
     "@sendgrid/mail": "^8.1.0",
-    "cron": "^3.1.7"
+    "cron": "^3.1.7",
+    "dotenv": "^16.4.5",
+    "googleapis": "^132.0.0",
+    "node-fetch": "^3.3.2",
+    "openai": "^4.30.0"
   },
   "engines": {
     "node": ">=22.0.0"
