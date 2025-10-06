@@ -124,7 +124,7 @@ async function fetchGSCData() {
     const startDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
 
     const res = await webmasters.searchanalytics.query({
-      siteUrl: "https://sofipex.ro",
+      siteUrl: "https://www.sofipex.ro/",
       requestBody: { startDate, endDate, dimensions: ["query"], rowLimit: 10 },
     });
 
