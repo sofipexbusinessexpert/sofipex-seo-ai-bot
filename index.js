@@ -78,36 +78,14 @@ async function fetchGSCData() {
   }
 }
 
-/* === 🧮 Calculează scor SEO pe baza GSC === */
-function calculateSEOScore(item) {
-  // formula: scor = CTR * 0.6 + (clicks / impresii * 100) * 0.4
-  const ctrScore = parseFloat(item.ctr) * 0.6;
-  const ratio = item.impressions ? (item.clicks / item.impressions) * 100 : 0;
-  const score = (ctrScore + ratio * 0.4).toFixed(2);
-  return parseFloat(score);
-}
-
-/* === 🧠 Selectează produse inteligente din GSC === */
+/* === 🧠 Selectează produse în funcție de GSC === */
 async function getDynamicProductsFromGSC(products, keywords) {
-  const scored = keywords.map(k => ({
-    ...k,
-    seoScore: calculateSEOScore(k)
-  }));
-
-  // sortare descrescătoare după scor
-  scored.sort((a, b) => b.seoScore - a.seoScore);
-
-  // log scoruri
-  console.table(scored.slice(0, 10));
-
-  // selectează produse legate de cuvintele cu scor mare
-  const topKeywords = scored.slice(0, 5).map(k => k.keyword);
   const filtered = products.filter(p =>
-    topKeywords.some(k => p.title.toLowerCase().includes(k.toLowerCase()))
+    keywords.some(k => p.title.toLowerCase().includes(k.keyword.toLowerCase()))
   );
 
   if (filtered.length === 0) {
-    console.warn("⚠️ Nu s-au găsit produse relevante. Se aleg 5 random.");
+    console.warn("⚠️ Nu s-au găsit produse relevante pentru cuvintele GSC. Se selectează random.");
     return products.sort(() => 0.5 - Math.random()).slice(0, 5);
   }
 
@@ -144,14 +122,18 @@ Returnează JSON valid:
 
 /* === 📈 Integrare Google Trends pentru articole === */
 async function getTrendingTopic() {
-  const topics = [
-    "ambalaje biodegradabile",
-    "cutii pizza personalizate",
-    "livrare ecologică",
-    "reciclarea ambalajelor din plastic",
-    "inovații în industria alimentară"
-  ];
-  return topics[Math.floor(Math.random() * topics.length)];
+  try {
+    const topics = [
+      "ambalaje biodegradabile",
+      "cutii pizza personalizate",
+      "livrare ecologică",
+      "reciclarea ambalajelor din plastic",
+      "inovații în industria alimentară"
+    ];
+    return topics[Math.floor(Math.random() * topics.length)];
+  } catch {
+    return "tendințele în ambalaje alimentare din România";
+  }
 }
 
 /* === 📰 Generează articol SEO dinamic === */
@@ -166,7 +148,13 @@ Include:
 - meta title (max 60 caractere)
 - meta descriere (max 160 caractere)
 - 3 taguri SEO relevante
-Returnează JSON valid.
+Returnează JSON valid:
+{
+  "meta_title": "...",
+  "meta_description": "...",
+  "tags": "...",
+  "content_html": "<h1>...</h1>..."
+}
 `;
 
   const response = await openai.chat.completions.create({
@@ -249,7 +237,7 @@ async function sendEmail(reportHTML) {
     await sgMail.send({
       to: EMAIL_TO,
       from: process.env.EMAIL_FROM,
-      subject: "Raport SEO Sofipex (v5)",
+      subject: "Raport SEO Sofipex (v6)",
       html: reportHTML,
     });
     console.log("📨 Raportul a fost trimis!");
@@ -258,9 +246,51 @@ async function sendEmail(reportHTML) {
   }
 }
 
+/* === 📈 Funcții noi pentru raport vizual === */
+function analyzeKeywordTrends(gscDataOld, gscDataNew) {
+  const changes = gscDataNew.map(newItem => {
+    const old = gscDataOld.find(o => o.keyword === newItem.keyword);
+    const change = old ? (newItem.ctr - old.ctr).toFixed(1) : 0;
+    return { keyword: newItem.keyword, change };
+  });
+
+  const topUp = changes.sort((a,b)=>b.change - a.change).slice(0,3);
+  const topDown = changes.sort((a,b)=>a.change - b.change).slice(0,3);
+  return { topUp, topDown };
+}
+
+function generateChartHTML(gscData) {
+  const labels = gscData.map(k => k.keyword);
+  const ctrValues = gscData.map(k => k.ctr);
+  const impValues = gscData.map(k => k.impressions);
+
+  return `
+  <canvas id="seoChart" width="600" height="300"></canvas>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    const ctx = document.getElementById('seoChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: ${JSON.stringify(labels)},
+        datasets: [
+          { label: 'CTR (%)', data: ${JSON.stringify(ctrValues)}, backgroundColor: 'rgba(75, 192, 192, 0.6)' },
+          { label: 'Impresii', data: ${JSON.stringify(impValues)}, backgroundColor: 'rgba(255, 159, 64, 0.6)' }
+        ]
+      },
+      options: { responsive: true, scales: { y: { beginAtZero: true } } }
+    });
+  </script>`;
+}
+
+function averageSEOScore(gscData) {
+  const total = gscData.reduce((acc, k) => acc + parseFloat(k.ctr || 0), 0);
+  return (total / gscData.length).toFixed(2);
+}
+
 /* === 🚀 Funcția principală === */
 async function runSEOAutomation() {
-  console.log("🚀 Pornit Sofipex Smart SEO v5...");
+  console.log("🚀 Pornit Sofipex Smart SEO v6...");
 
   const gscKeywords = await fetchGSCData();
   const products = await getProducts();
@@ -283,8 +313,12 @@ async function runSEOAutomation() {
   const article = await generateBlogArticleFromTrends();
   const blogTitle = await postBlogArticle(article);
 
+  const seoChart = generateChartHTML(gscKeywords);
+  const seoScore = averageSEOScore(gscKeywords);
+
   raport += `</ul><p>📰 Articol creat: <b>${blogTitle}</b> (tema: ${article.topic})</p>`;
   raport += `<h3>🔍 Cuvinte cheie GSC:</h3><p>${gscKeywords.map(k => `• ${k.keyword} (${k.ctr}%)`).join("<br>")}</p>`;
+  raport += `<h3>📊 Evoluție CTR / Impresii</h3>${seoChart}<p>⭐ Scor SEO mediu: ${seoScore}%</p>`;
 
   await sendEmail(raport);
   await saveToGoogleSheets(raport);
@@ -298,5 +332,5 @@ runSEOAutomation();
 
 /* === 🌐 Fix Render (port binding) === */
 const app = express();
-app.get("/", (req, res) => res.send("✅ Sofipex Smart SEO v5 rulează cu succes!"));
+app.get("/", (req, res) => res.send("✅ Sofipex Smart SEO v6 rulează cu succes!"));
 app.listen(process.env.PORT || 3000, () => console.log("🌐 Server activ pe portul 3000"));
