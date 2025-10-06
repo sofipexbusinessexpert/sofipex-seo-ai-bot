@@ -80,64 +80,76 @@ Returnează un JSON valid:
   }
 }
 
-/* === 📰 Generează articol SEO din Google Trends === */
+/* === Generează zilnic un articol SEO dinamic === */
 async function generateBlogArticle() {
+  // listă de teme posibile – GPT va alege aleator una în fiecare zi
+  const topics = [
+    "ambalaje biodegradabile pentru restaurante și cafenele",
+    "tendințele actuale în ambalajele alimentare din România",
+    "beneficiile cutiilor de pizza personalizate pentru afaceri locale",
+    "importanța caserolelor ecologice în livrarea de mâncare",
+    "viitorul ambalajelor sustenabile în industria HoReCa",
+    "inovații românești în producția de ambalaje biodegradabile",
+    "cum influențează designul ambalajului decizia de cumpărare",
+    "ambalaje din trestie de zahăr și materiale compostabile",
+    "strategii de marketing prin ambalaj pentru restaurante",
+    "impactul reglementărilor UE asupra producătorilor de ambalaje",
+  ];
+
+  // selectează un subiect diferit la fiecare rulare
+  const topic = topics[Math.floor(Math.random() * topics.length)];
+
   const prompt = `
-Scrie un articol SEO complet pentru Sofipex.ro despre tendințele actuale din industria ambalajelor alimentare din România.
-Include următoarele:
-- <h1> titlu principal
-- <h2> și <h3> pentru subtitluri
-- 2-3 paragrafe descriptive
+Creează un articol SEO complet pentru blogul Sofipex.ro despre tema: "${topic}".
+Include:
+- un <h1> titlu principal atractiv
+- 2 subtitluri <h2> relevante
+- conținut informativ HTML curat (2-3 paragrafe)
 - 3 taguri SEO relevante
 - un meta title (max 60 caractere)
 - o meta descriere (max 160 caractere)
-- totul în format HTML valid
-
-Returnează un JSON valid cu următoarele câmpuri:
+Returnează un JSON valid:
 {
   "meta_title": "...",
   "meta_description": "...",
   "tags": "...",
-  "content_html": "<h1>...</h1> ... restul articolului ..."
+  "content_html": "<h1>...</h1> ..."
 }
 `;
-
 
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.6,
+      temperature: 0.7,
     });
 
-    let text = response.choices[0].message.content;
-
-    // Curățare conținut JSON
-    text = text.replace(/```json|```/g, "").trim();
-
+    let text = response.choices[0].message.content.replace(/```json|```/g, "").trim();
     const article = JSON.parse(text);
 
     return {
-      title: article.meta_title || "Articol SEO Sofipex",
-      meta_title: article.meta_title || "Optimizare SEO Sofipex",
+      title: article.meta_title || topic,
+      meta_title: article.meta_title || topic,
       meta_description:
-        article.meta_description || "Articol SEO despre ambalaje ecologice și tendințe de sustenabilitate.",
+        article.meta_description || "Articol SEO despre ambalaje alimentare și tendințe ecologice.",
       tags: article.tags || "ambalaje, eco, sustenabil",
       body_html: article.content_html,
+      topic,
     };
   } catch (err) {
-    console.error("❌ Eroare la generarea articolului SEO:", err.message);
+    console.error("❌ Eroare generare articol SEO:", err.message);
     return {
       title: "Articol SEO Sofipex",
       meta_title: "Articol SEO Sofipex",
       meta_description: "Descriere SEO generată automat pentru blog Sofipex.",
       tags: "SEO, ambalaje, ecologic",
       body_html: "<h1>Articol generat automat</h1><p>Conținut indisponibil momentan.</p>",
+      topic: "Eroare generare articol",
     };
   }
 }
 
-/* === ✍️ Postează articolul pe Shopify Blog === */
+/* === Postează articolul ca draft optimizat SEO === */
 async function postBlogArticle(article) {
   try {
     await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/blogs/${BLOG_ID}/articles.json`, {
@@ -150,7 +162,7 @@ async function postBlogArticle(article) {
         article: {
           title: article.title,
           body_html: article.body_html,
-          author: "Sofipex SEO AI",
+          author: "Sofipex AI",
           tags: article.tags,
           published: false,
           metafields: [
@@ -161,10 +173,10 @@ async function postBlogArticle(article) {
       }),
     });
 
-    console.log(`📰 Articol creat și optimizat SEO: ${article.title}`);
+    console.log(`📰 Articol creat automat: ${article.title} (${article.topic})`);
     return article.title;
   } catch (err) {
-    console.error("❌ Eroare la publicarea articolului:", err.message);
+    console.error("❌ Eroare publicare articol:", err.message);
     return "Eroare la creare articol";
   }
 }
