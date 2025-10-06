@@ -1,16 +1,17 @@
+import { google } from "googleapis";
+import fs from "fs";
 import fetch from "node-fetch";
 import OpenAI from "openai";
 import cron from "node-cron";
 import 'dotenv/config';
 import sgMail from "@sendgrid/mail";
 
+/* === Variabile de mediu === */
 const SHOPIFY_API = process.env.SHOPIFY_API;
 const OPENAI_KEY = process.env.OPENAI_KEY;
 const SHOP_NAME = "sofipex"; 
 const BLOG_ID = "120069488969";
 const EMAIL_TO = process.env.EMAIL_TO;
-const GMAIL_USER = process.env.GMAIL_USER;
-const GMAIL_PASS = process.env.GMAIL_PASS;
 
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
 
@@ -88,6 +89,54 @@ async function postBlogArticle(title, body) {
   });
 }
 
+/* === Integrare Google Search Console === */
+async function fetchGSCData() {
+  try {
+    const auth = new google.auth.GoogleAuth({
+      keyFile: "./gsc-service-account.json",
+      scopes: ["https://www.googleapis.com/auth/webmasters.readonly"],
+    });
+
+    const webmasters = google.webmasters({ version: "v3", auth });
+
+    const endDate = new Date().toISOString().split("T")[0];
+    const startDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .split("T")[0];
+
+    const res = await webmasters.searchanalytics.query({
+      siteUrl: "https://sofipex.ro",
+      requestBody: {
+        startDate,
+        endDate,
+        dimensions: ["query"],
+        rowLimit: 10,
+      },
+    });
+
+    const rows = res.data.rows || [];
+    if (rows.length === 0) {
+      console.log("📊 Nu există date GSC pentru intervalul selectat.");
+      return "Nu s-au găsit cuvinte cheie recente.";
+    }
+
+    const topKeywords = rows
+      .map(
+        (r) =>
+          `• ${r.keys[0]} — ${r.clicks} clickuri, ${r.impressions} afișări, CTR ${(
+            r.ctr * 100
+          ).toFixed(1)}%`
+      )
+      .join("<br>");
+
+    console.log("📊 Date GSC extrase cu succes!");
+    return topKeywords;
+  } catch (err) {
+    console.error("❌ Eroare GSC:", err.message);
+    return "Eroare la conectarea cu Google Search Console.";
+  }
+}
+
 /* === Trimite raport pe e-mail === */
 async function sendEmail(report) {
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
@@ -109,19 +158,21 @@ async function sendEmail(report) {
 
 /* === Funcția principală === */
 async function runSEOAutomation() {
+  console.log("🚀 Pornit audit SEO automat Sofipex...");
   const products = await getProducts();
-  let raport = "<h2>Raport zilnic SEO Sofipex</h2><ul>";
+  let raport = "<h2>📅 Raport zilnic SEO Sofipex</h2><ul>";
 
-  for (const product of products.slice(0, 5)) { // primele 5/zi pentru test
+  for (const product of products.slice(0, 5)) { // optimizează 5 produse/zi
     const { meta_title, meta_description, seo_text } = await generateSEOContent(
-      product.title, product.body_html?.replace(/<[^>]+>/g, "") || ""
+      product.title,
+      product.body_html?.replace(/<[^>]+>/g, "") || ""
     );
     await updateProduct(product.id, {
       id: product.id,
       title: product.title,
       body_html: `<h2>${product.title}</h2><p>${seo_text}</p>`,
       metafields_global_title_tag: meta_title,
-      metafields_global_description_tag: meta_description
+      metafields_global_description_tag: meta_description,
     });
     raport += `<li>✅ ${product.title}</li>`;
   }
@@ -131,8 +182,12 @@ async function runSEOAutomation() {
   await postBlogArticle(title, blog);
   raport += `</ul><p>📰 Articol creat: <b>${title}</b> (draft)</p>`;
 
+  const gscData = await fetchGSCData();
+  raport += `<h3>🔍 Cuvinte cheie Google Search Console (ultimele 5 zile):</h3><p>${gscData}</p>`;
+
   await sendEmail(raport);
   console.log("✅ Raport trimis și automatizare completă executată!");
+  process.exit(0); // Închide procesul curat (evită mesajele cu open ports)
 }
 
 /* === Programare automată (08:00 România = 06:00 UTC) === */
