@@ -89,8 +89,6 @@ async function postBlogArticle(title, body) {
 }
 
 /* === Trimite raport pe e-mail === */
-import sgMail from "@sendgrid/mail";
-
 async function sendEmail(report) {
   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
