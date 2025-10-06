@@ -11,7 +11,6 @@ const OPENAI_KEY = process.env.OPENAI_KEY;
 const SHOP_NAME = process.env.SHOP_NAME || "sofipex";
 const BLOG_ID = "120069488969";
 const EMAIL_TO = process.env.EMAIL_TO;
-const GOOGLE_KEY_PATH = process.env.GOOGLE_KEY_PATH || "/etc/secrets/gsc-service-account.json";
 
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
 
@@ -140,7 +139,7 @@ async function postBlogArticle(body) {
 async function fetchGSCData() {
   try {
     const auth = new google.auth.GoogleAuth({
-      keyFile: GOOGLE_KEY_PATH,
+      keyFile: "./gsc-service-account.json",
       scopes: ["https://www.googleapis.com/auth/webmasters.readonly"],
     });
 
@@ -169,7 +168,7 @@ async function fetchGSCData() {
 async function saveToGoogleSheets(reportText) {
   try {
     const auth = new google.auth.GoogleAuth({
-      keyFile: GOOGLE_KEY_PATH,
+      keyFile: "./gsc-service-account.json",
       scopes: ["https://www.googleapis.com/auth/spreadsheets"],
     });
 
