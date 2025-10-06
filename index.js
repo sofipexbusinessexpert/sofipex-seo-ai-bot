@@ -50,21 +50,22 @@ Returnează un JSON valid cu câmpurile:
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
+      temperature: 0.5,
     });
 
-    let raw = response.choices[0].message.content;
-
-    // 🔧 Curățare completă a textului primit
-    raw = raw
-      .replace(/^[^\{]*/, "")           // elimină orice text înainte de prima acoladă
-      .replace(/```json|```|“|”|‘|’/g, '"')  // înlocuiește ghilimele și backticks
-      .replace(/\n/g, " ")              // elimină newline-uri
-      .replace(/\r/g, " ")              // elimină carriage return
+    let raw = response.choices[0].message.content
+      .replace(/^[^\{]*/, "")            // elimină textul înainte de "{"
+      .replace(/[`´‘’“”]/g, '"')         // normalizează ghilimelele
+      .replace(/\n/g, " ")               // elimină newline-uri
+      .replace(/\r/g, " ")               // elimină carriage return
+      .replace(/\s+$/g, "")              // elimină spațiile de la final
       .trim();
 
-    const parsed = JSON.parse(raw);
-    return parsed;
+    // ✨ elimină orice text după ultima acoladă '}'
+    const lastBrace = raw.lastIndexOf("}");
+    if (lastBrace !== -1) raw = raw.substring(0, lastBrace + 1);
 
+    return JSON.parse(raw);
   } catch (err) {
     console.warn("⚠️ Eroare OpenAI sau JSON invalid:", err.message);
     return {
@@ -74,6 +75,7 @@ Returnează un JSON valid cu câmpurile:
     };
   }
 }
+
 
 /* === Generează articol SEO curat === */
 async function generateBlogArticle() {
@@ -167,13 +169,13 @@ async function saveToGoogleSheets(reportText) {
     const sheets = google.sheets({ version: "v4", auth });
     const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
 
-    if (!spreadsheetId) throw new Error("❌ Variabila GOOGLE_SHEETS_ID lipsește!");
-
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: "Rapoarte!A:B",
+      range: "Rapoarte!A1", // ✅ Fix: trebuie o celulă de start validă
       valueInputOption: "RAW",
-      requestBody: { values: [[new Date().toLocaleString("ro-RO"), reportText]] },
+      requestBody: {
+        values: [[new Date().toLocaleString("ro-RO"), reportText]],
+      },
     });
 
     console.log("📊 Raport salvat în Google Sheets!");
@@ -181,6 +183,7 @@ async function saveToGoogleSheets(reportText) {
     console.error("❌ Eroare Google Sheets:", err.message);
   }
 }
+
 
 /* === Trimite raportul zilnic prin SendGrid === */
 async function sendEmail(report) {
