@@ -1,11 +1,11 @@
+import express from "express";
 import { google } from "googleapis";
-import fs from "fs";
 import fetch from "node-fetch";
 import OpenAI from "openai";
 import cron from "node-cron";
 import 'dotenv/config';
 import sgMail from "@sendgrid/mail";
-import express from "express";
+import fs from "fs";
 
 /* === Variabile de mediu === */
 const SHOPIFY_API = process.env.SHOPIFY_API;
@@ -57,7 +57,9 @@ Returnează un JSON valid cu câmpurile:
     let raw = response.choices[0].message.content
       .replace(/^[^\{]*/, "")
       .replace(/[`´‘’“”]/g, '"')
-      .replace(/\n|\r/g, " ")
+      .replace(/\n/g, " ")
+      .replace(/\r/g, " ")
+      .replace(/\s+$/g, "")
       .trim();
 
     const lastBrace = raw.lastIndexOf("}");
@@ -93,9 +95,11 @@ Răspunde exclusiv cu HTML complet curat (fără \`\`\` sau alte delimitări).
     messages: [{ role: "user", content: prompt }],
   });
 
-  return response.choices[0].message.content
+  let content = response.choices[0].message.content
     .replace(/```html|```/g, "")
     .trim();
+
+  return content;
 }
 
 /* === Postează articolul ca draft pe Shopify === */
@@ -231,14 +235,11 @@ async function runSEOAutomation() {
   console.log("✅ Raport trimis și automatizare completă executată!");
 }
 
-/* === Rulează zilnic la 08:00 România (06:00 UTC) === */
+/* === Programare automată (08:00 România = 06:00 UTC) === */
 cron.schedule("0 6 * * *", runSEOAutomation);
-
-/* === Pornire inițială === */
 runSEOAutomation();
 
-/* === Server permanent pentru Render === */
-import express from "express";
+/* === Server Express pentru „keep alive” pe Render === */
 const app = express();
-app.get("/", (req, res) => res.send("✅ Sofipex SEO Bot este online permanent!"));
-app.listen(process.env.PORT || 3000, () => console.log("🌐 Server activ pe Render"));
+app.get("/", (req, res) => res.send("✅ Sofipex SEO Bot rulează permanent pe Render!"));
+app.listen(process.env.PORT || 3000, () => console.log("🌐 Server activ pe portul 3000"));
