@@ -89,19 +89,26 @@ async function postBlogArticle(title, body) {
 }
 
 /* === Trimite raport pe e-mail === */
-async function sendEmail(report) {
-  const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 465,
-    secure: true,
-    auth: { user: GMAIL_USER, pass: GMAIL_PASS }
-  });
+async function sendEmail(report) {import sgMail from "@sendgrid/mail";
 
-  await transporter.sendMail({
-    from: `"Sofipex SEO Bot" <${GMAIL_USER}>`,
-    to: EMAIL_TO,
+async function sendEmail(report) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+  const msg = {
+    to: process.env.EMAIL_TO,
+    from: process.env.EMAIL_FROM,
     subject: "Raport zilnic SEO Sofipex",
-    html: report
+    html: report,
+  };
+
+  try {
+    await sgMail.send(msg);
+    console.log("📨 Raportul a fost trimis prin SendGrid!");
+  } catch (error) {
+    console.error("❌ Eroare la trimiterea e-mailului:", error.response?.body || error.message);
+  }
+}
+
   });
 }
 
