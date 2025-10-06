@@ -52,16 +52,26 @@ Returnează un JSON valid cu câmpurile:
       messages: [{ role: "user", content: prompt }],
     });
 
-    let raw = response.choices[0].message.content.trim();
+    let raw = response.choices[0].message.content;
 
-    // Curățare de text extra (backticks, etc.)
-    raw = raw.replace(/```json|```|“|”|‘|’/g, '"').trim();
+    // 🔧 Curățare completă a textului primit
+    raw = raw
+      .replace(/^[^\{]*/, "")           // elimină orice text înainte de prima acoladă
+      .replace(/```json|```|“|”|‘|’/g, '"')  // înlocuiește ghilimele și backticks
+      .replace(/\n/g, " ")              // elimină newline-uri
+      .replace(/\r/g, " ")              // elimină carriage return
+      .trim();
 
     const parsed = JSON.parse(raw);
     return parsed;
+
   } catch (err) {
     console.warn("⚠️ Eroare OpenAI sau JSON invalid:", err.message);
-    return { meta_title: title, meta_description: "", seo_text: body };
+    return {
+      meta_title: title,
+      meta_description: "Optimizare automată SEO pentru produs.",
+      seo_text: body || "Descriere SEO generată automat.",
+    };
   }
 }
 
