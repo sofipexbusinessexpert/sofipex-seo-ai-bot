@@ -91,6 +91,24 @@ async function saveToSheets(tab, values) {
   } catch (err) { console.error(`❌ Sheets ${tab} error:`, err.message); }
 }
 
+// === Meta utils: strip HTML and clamp lengths ===
+function stripHtmlAndWhitespace(input) {
+  const text = String(input || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;|&amp;|&quot;|&#39;|&lt;|&gt;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text;
+}
+function clampText(input, maxLen) {
+  const s = String(input || '');
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen - 1).trim() + '…';
+}
+function sanitizeMetaField(text, maxLen) {
+  return clampText(stripHtmlAndWhitespace(text), maxLen);
+}
+
 // === App State (persisted in Google Sheets 'State' tab, with in-memory fallback) ===
 async function getStateValue(key) {
   try {
@@ -215,8 +233,8 @@ async function updateProduct(id, updates) {
     const metafields = [];
     metafields.push({ namespace: "seo", key: "last_optimized_date", value: new Date().toISOString().split('T')[0], type: "date" });
 
-    if (updates.meta_title) { metafields.push({ namespace: "global", key: "title_tag", value: updates.meta_title, type: "single_line_text_field" }); }
-    if (updates.meta_description) { metafields.push({ namespace: "global", key: "description_tag", value: updates.meta_description, type: "single_line_text_field" }); }
+    if (updates.meta_title) { metafields.push({ namespace: "global", key: "title_tag", value: sanitizeMetaField(updates.meta_title, 60), type: "single_line_text_field" }); }
+    if (updates.meta_description) { metafields.push({ namespace: "global", key: "description_tag", value: sanitizeMetaField(updates.meta_description, 160), type: "single_line_text_field" }); }
 
     const productPayload = { metafields, };
     if (updates.body_html !== undefined) { productPayload.body_html = updates.body_html; }
@@ -328,7 +346,11 @@ Returnează JSON STRICT: {"meta_title": "...", "meta_description": "..."}`;
   try {
     const r = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.3, });
     const parsed = JSON.parse(r.choices[0].message.content.replace(/```json|```/g, "").trim());
-    return parsed;
+    // Enforce hard limits
+    return {
+      meta_title: sanitizeMetaField(parsed.meta_title || title, 60),
+      meta_description: sanitizeMetaField(parsed.meta_description || bodySnippet || title, 160)
+    };
   } catch (e) { return { meta_title: title, meta_description: `Ambalaje eco de calitate de la Sofipex. ${title.substring(0, 100)}.` }; }
 }
 async function generateProductPatch(title, existingBody, titleKeywords) {
@@ -464,7 +486,10 @@ runSEOAutomation();
 
 async function applyProposedOptimization(proposal) {
     try {
-        const updates = { body_html: proposal.newDescription };
+        // Ensure meta fields are set/clamped during approval to prevent Shopify from inferring from body
+        const safeTitle = sanitizeMetaField(proposal.productTitle || '', 60);
+        const safeDesc = sanitizeMetaField(proposal.newDescription || proposal.oldDescription || proposal.productTitle || '', 160);
+        const updates = { body_html: proposal.newDescription, meta_title: safeTitle, meta_description: safeDesc };
         await updateProduct(proposal.productId, updates); 
         return true;
     } catch (err) {
