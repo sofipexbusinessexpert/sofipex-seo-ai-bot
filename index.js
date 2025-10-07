@@ -1,20 +1,19 @@
 /* =====================================================
-   🤖 Otto SEO AI v7 — Sofipex Smart SEO (Render Ready) — Versiune Fixată v3
+   🤖 Otto SEO AI v7 — Sofipex Smart SEO (Render Ready) — Versiune Fixată v4
    -----------------------------------------------------
-   ✅ Integrare Google Trends real-time (România)
-   ✅ GPT filtrare trenduri relevante + AI score (FIX: keywords extinse, nu repeta)
-   ✅ GSC 28 zile + scor SEO per produs (FIX: cooldown 30 zile via metafield)
-   ✅ Shopify SEO auto-update (FIX: metafields + last_optimized_date)
+   ✅ Integrare Google Trends real-time (România) (FIX: handle undefined trends)
+   ✅ GPT filtrare trenduri relevante + AI score (FIX: guard pentru trends undefined)
+   ✅ GSC 28 zile + scor SEO per produs
+   ✅ Shopify SEO auto-update
    ✅ Dashboard public cu reoptimizare manuală
-   ✅ Google Sheets tab separat (Scoruri + Trenduri + Rapoarte) (FIX: headers + structură)
-   ✅ SendGrid raport complet (FIX: link Rapoarte)
+   ✅ Google Sheets tab separat (Scoruri + Trenduri + Rapoarte)
+   ✅ SendGrid raport complet
    ===================================================== 
    FIX-uri noi:
-   - Meta description: Prompt clar pentru completitudine.
-   - Nu repeta trenduri: Query "Trenduri" pentru recente (ultimele 10), exclude din relevant.
-   - Keywords: Listă extinsă statică (din search: cutii pizza, pahare carton etc.) în prompt filtrare.
-   - Cooldown: Metafield "seo_last_optimized_date", filtrează produse <30 zile.
-   - Sheets: Headers auto (check prima row), granularitate, tab "Rapoarte" cu detalii run.
+   - Trends undefined: Guard în filterTrendsWithAI (!trends || length==0), fallback prompt cu KEYWORDS dacă gol.
+   - Logging extins în fetchGoogleTrends pentru debug (ce eroare exactă).
+   - Dacă trends gol/undefined, folosește direct un keyword random din listă pentru articol.
+   - Asigură că relevant nu crash dacă empty.
    */
 
 import express from "express";
@@ -49,7 +48,7 @@ app.use(express.json());
 // Memorie simplă pentru dashboard
 let lastRunData = { trends: [], scores: [] };
 
-// Keywords extinse (din search web)
+// Keywords extinse
 const KEYWORDS = [
   "cutii pizza", "ambalaje biodegradabile", "pahare carton", "caserole eco", "tăvițe fast food",
   "pungi hartie", "cutii burger", "ambalaje HoReCa", "ambalaje unica folosinta", "cutii carton",
@@ -57,7 +56,7 @@ const KEYWORDS = [
   "bărci fast food", "eco tray", "cutii burger", "wrap-uri eco", "salate ambalaje"
 ];
 
-/* === 📥 Google Sheets Utils (FIX: headers + query) === */
+/* === 📥 Google Sheets Utils === */
 async function getAuth(scopes) {
   return new google.auth.GoogleAuth({
     keyFile: GOOGLE_KEY_PATH,
@@ -75,7 +74,6 @@ async function ensureHeaders(tab, headers) {
     });
     const firstRow = res.data.values?.[0] || [];
     if (firstRow.join(',') !== headers.join(',')) {
-      // Clear și set headers
       await sheets.spreadsheets.values.clear({ spreadsheetId: GOOGLE_SHEETS_ID, range: `${tab}!A:Z` });
       await sheets.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEETS_ID,
@@ -100,7 +98,7 @@ async function saveToSheets(tab, values, isHeader = false) {
     }
     const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
     const sheets = google.sheets({ version: "v4", auth });
-    const range = isHeader ? `${tab}!A1` : `${tab}!A:A`; // Append la sfârșit
+    const range = isHeader ? `${tab}!A1` : `${tab}!A:A`;
     await sheets.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEETS_ID,
       range,
@@ -123,11 +121,10 @@ async function getRecentTrends(days = 30) {
     });
     const rows = res.data.values || [];
     if (rows.length === 0) return [];
-    // Presupun row 1 headers, rows[1:] data; filtrează ultimele după data (prima coloană)
     const recent = rows.slice(1).filter(row => {
       const date = new Date(row[0]);
       return (Date.now() - date) < days * 24 * 60 * 60 * 1000;
-    }).map(row => row[1]); // Trend în coloana B
+    }).map(row => row[1]);
     console.log(`✅ Recent trends (${days} zile): ${recent.length} găsite`);
     return recent;
   } catch (err) {
@@ -136,7 +133,7 @@ async function getRecentTrends(days = 30) {
   }
 }
 
-/* === 🛍️ Shopify (FIX: metafields în query + cooldown) === */
+/* === 🛍️ Shopify === */
 async function getProducts() {
   try {
     const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products.json?fields=id,title,body_html,metafields`, {
@@ -149,7 +146,7 @@ async function getProducts() {
       const lastDate = lastOpt ? new Date(lastOpt) : null;
       const eligible = !lastDate || (Date.now() - lastDate) > 30 * 24 * 60 * 60 * 1000;
       return { ...p, last_optimized_date: lastDate, eligible_for_optimization: eligible };
-    }).filter(p => p.eligible_for_optimization); // Doar eligibile
+    }).filter(p => p.eligible_for_optimization);
     console.log(`✅ Products: ${products.length}/${data.products?.length || 0} eligibile (cu cooldown)`);
     return products;
   } catch (e) {
@@ -163,7 +160,7 @@ async function updateProduct(id, updates) {
     const metafields = [
       { namespace: "global", key: "title_tag", value: updates.meta_title, type: "single_line_text_field" },
       { namespace: "global", key: "description_tag", value: updates.meta_description, type: "single_line_text_field" },
-      { namespace: "seo", key: "last_optimized_date", value: new Date().toISOString().split('T')[0], type: "date" } // FIX: Cooldown
+      { namespace: "seo", key: "last_optimized_date", value: new Date().toISOString().split('T')[0], type: "date" }
     ];
 
     const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products/${id}.json`, {
@@ -198,7 +195,7 @@ async function createShopifyArticle(article) {
         blog_id: BLOG_ID,
         body_html: article.content_html,
         meta_title: article.meta_title,
-        meta_description: article.meta_description, // FIX: Asigurat
+        meta_description: article.meta_description,
         published: false,
       },
     };
@@ -218,15 +215,67 @@ async function createShopifyArticle(article) {
   }
 }
 
-/* === 🔍 GSC, Trends, GPT (FIX: keywords în prompt, exclude recent) === */
-async function fetchGSCData() { /* Nemodificat */ /* ... */ } // Păstrez ca înainte
-async function fetchGoogleTrends() { /* Nemodificat */ /* ... */ }
-async function generateSEOContent(title, body) { /* Nemodificat */ /* ... */ }
-function calculateSEOScore({ clicks, impressions, ctr }) { /* Nemodificat */ /* ... */ }
+/* === 🔍 GSC === */
+async function fetchGSCData() {
+  try {
+    const auth = new google.auth.GoogleAuth({
+      keyFile: GOOGLE_KEY_PATH,
+      scopes: ["https://www.googleapis.com/auth/webmasters.readonly"],
+    });
+    const webmasters = google.webmasters({ version: "v3", auth });
+    const endDate = new Date().toISOString().split("T")[0];
+    const startDate = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    const res = await webmasters.searchanalytics.query({
+      siteUrl: "https://www.sofipex.ro/",
+      requestBody: { startDate, endDate, dimensions: ["query"], rowLimit: 25 },
+    });
+    const rows = res.data.rows?.map((r) => ({
+      keyword: r.keys[0],
+      clicks: r.clicks,
+      impressions: r.impressions,
+      ctr: (r.ctr * 100).toFixed(1),
+      position: r.position.toFixed(1),
+    })) || [];
+    console.log(`✅ GSC: ${rows.length} keywords fetch-uite`);
+    return rows;
+  } catch (err) {
+    console.error("❌ GSC error:", err.message);
+    return [];
+  }
+}
 
+/* === 🌍 Google Trends (FIX: logging detaliat) === */
+async function fetchGoogleTrends() {
+  console.log("🔍 Starting fetch Trends...");
+  try {
+    const response = await fetch("https://trends.google.com/trends/trendingsearches/daily/rss?geo=RO");
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    const xml = await response.text();
+    console.log("✅ XML fetched, length:", xml.length);
+    const matches = [...xml.matchAll(/<title>(.*?)<\/title>/g)].map((m) => m[1]);
+    const trends = matches.slice(2, 22);
+    console.log(`✅ Trends: ${trends.length} fetch-uite (ex: ${trends[0] || 'none'})`);
+    return trends;
+  } catch (e) {
+    console.error("❌ Trends error details:", e.message, "| Full error:", e);
+    return []; // Asigură return []
+  }
+}
+
+/* === 🧠 GPT filtrare (FIX: guard undefined trends) === */
 async function filterTrendsWithAI(trends, recentTrends = []) {
-  if (trends.length === 0) return [];
+  // FIX: Guard pentru trends undefined
+  if (!trends || trends.length === 0) {
+    console.log("⚠️ Trends empty/undefined, folosesc fallback din KEYWORDS");
+    // Returnează un "trend" random din keywords ca relevant
+    const fallbackTrend = KEYWORDS[Math.floor(Math.random() * KEYWORDS.length)];
+    return [{ trend: fallbackTrend, score: 90 }];
+  }
+  
   const exclude = recentTrends.join(", ");
+  // Dacă trends gol după guard, nu ajunge aici
   const prompt = `
 Selectează din lista de mai jos doar trendurile relevante pentru Sofipex (nișa: ${KEYWORDS.join(", ")}).
 Excludere trenduri recente procesate: ${exclude || "niciuna"}.
@@ -248,6 +297,26 @@ JSON: {"relevante": [{"trend": "...", "score": 85}, ...]}`;
   }
 }
 
+/* === ✍️ Generare SEO Content pentru Produs === */
+async function generateSEOContent(title, body) {
+  const prompt = `Creează meta title (max 60 caractere) și meta descriere (max 160 caractere) profesionale, optimizate SEO pentru produsul: "${title}". Include keywords relevante din nișa ambalaje eco. Returnează JSON strict: {"meta_title": "...", "meta_description": "..."}`;
+  try {
+    const r = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+    });
+    const raw = r.choices[0].message.content.replace(/^[^{]*/, "").trim();
+    const parsed = JSON.parse(raw.substring(0, raw.lastIndexOf("}") + 1));
+    console.log(`✅ SEO content gen: ${parsed.meta_title.substring(0, 30)}...`);
+    return parsed;
+  } catch (e) {
+    console.error("❌ SEO content error:", e.message);
+    return { meta_title: title, meta_description: `Ambalaje eco de calitate de la Sofipex. ${title}` };
+  }
+}
+
+/* === 📰 Articol SEO din trend === */
 async function generateBlogArticle(trend) {
   const prompt = `
 Creează articol SEO detaliat despre "${trend}" pentru Sofipex.ro (ambalaje eco: ${KEYWORDS.join(", ")}).
@@ -256,7 +325,7 @@ Min 800 cuvinte, HTML curat.
 Meta title: max 60 char cu "${trend}".
 Meta description: OBLIGATORIU max 160 char, persuasivă, keywords din nișa (ex: ambalaje eco, cutii pizza).
 3-5 taguri.
-JSON EXACT: {"title": "...", "meta_title": "...", "meta_description": "...", "tags": [...], "content_html": "<h1>...</h1>"}`; // FIX: Meta desc clar
+JSON EXACT: {"title": "...", "meta_title": "...", "meta_description": "...", "tags": [...], "content_html": "<h1>...</h1>"}`;
   try {
     const r = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -266,22 +335,95 @@ JSON EXACT: {"title": "...", "meta_title": "...", "meta_description": "...", "ta
     });
     const article = JSON.parse(r.choices[0].message.content.replace(/```json|```/g, "").trim());
     if (article.content_html.length < 1000) {
-      // Fallback extins...
-      article.content_html = `<h1>${trend}</h1><p>Detalii extinse...</p>`; // Ca înainte
+      console.warn("⚠️ Conținut scurt, extins fallback");
+      article.content_html = `<h1>${trend}</h1><p>Introducere detaliată despre ${trend} în contextul ambalajelor sustenabile la Sofipex. Explorăm beneficiile materialelor biodegradabile și inovațiile în cutii pizza eco.</p><h2>Beneficii cheie</h2><ul><li>Reducere impact mediu cu 50% prin materiale reciclabile.</li><li>Costuri reduse pe termen lung pentru afaceri HoReCa.</li><li>Conformitate cu reguli UE pentru ambalaje sustenabile.</li><li>Personalizare pentru branduri fast-food.</li><li>Durabilitate crescută pentru transport catering.</li></ul><h2>Inovații recente</h2><p>Descoperă noile trenduri: pahare carton impermeabile, caserole compostabile. Sofipex integrează tehnologii avansate pentru a oferi soluții complete.</p><p>Concluzie: Alege Sofipex pentru ambalaje eco care susțin afacerea ta. Contactează-ne azi pentru oferte personalizate!</p>`;
     }
     console.log(`✅ Articol: ${article.title} | Meta desc: ${article.meta_description?.length || 0} char`);
     return article;
   } catch (e) {
     console.error("❌ Articol error:", e.message);
-    return { /* Fallback cu meta desc */ meta_description: `Sofipex: ${trend} eco pentru afaceri sustenabile.` , /* ... */ };
+    return {
+      title: `${trend} | Sofipex`,
+      meta_title: `${trend} | Sofipex.ro`,
+      meta_description: `Sofipex: Soluții eco pentru ${trend}. Ambalaje biodegradabile de calitate superioară pentru fast-food și catering.`,
+      tags: ["sustenabilitate", "eco", "ambalaje"],
+      content_html: `<h1>${trend}</h1><p>Articol detaliat generat de AI despre ${trend}. Sofipex oferă soluții inovatoare pentru ambalaje eco...</p>`, // Extins ca mai sus
+    };
   }
 }
 
-async function matchKeywordToProduct(keyword, products, keywordScore) { /* Nemodificat, dar folosește products eligibile */ /* ... */ }
+/* === 🧮 Scoruri SEO === */
+function calculateSEOScore({ clicks, impressions, ctr }) {
+  const ctrScore = Number(ctr) / 5;
+  const impressionScore = Math.log10(impressions + 1) * 10;
+  const clickScore = Math.sqrt(clicks) * 5;
+  return Math.min(100, ctrScore + impressionScore + clickScore).toFixed(1);
+}
 
-/* === Dashboard, Email (FIX: link Rapoarte) === */
-function dashboardHTML() { /* Nemodificat */ /* ... */ }
+/* === 🔗 Mapare Keyword -> Produs === */
+async function matchKeywordToProduct(keyword, products, keywordScore) {
+  if (products.length === 0) return null;
+  if (Number(keywordScore) < 50) {
+    console.log(`⚠️ Keyword "${keyword}" scor prea slab (<50), folosesc random product`);
+    return products[Math.floor(Math.random() * products.length)];
+  }
+  const prompt = `Analizează keyword-ul "${keyword}" (scor SEO: ${keywordScore}) și match-uiește-l cu CEL MAI RELEVANT produs din lista Sofipex (ambalaje eco): ${products.map(p => `${p.id}: ${p.title}`).join('; ')}. 
+  Alege unul cu relevanță >80 dacă posibil, bazat pe match titlu/descriere cu nișa (pizza, caserole etc.). 
+  Returnează JSON: {"product_id": NUMAR, "relevance": 0-100, "reason": "explicație scurtă"}`;
+  try {
+    const r = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+    });
+    const content = r.choices[0].message.content.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(content);
+    console.log(`✅ Match: Keyword "${keyword}" -> Produs ${parsed.product_id} (relevanță ${parsed.relevance}, motiv: ${parsed.reason})`);
+    const product = products.find(p => p.id == parsed.product_id);
+    return product && parsed.relevance > 70 ? product : products[Math.floor(Math.random() * products.length)];
+  } catch (e) {
+    console.error("❌ Match error:", e.message);
+    return products[Math.floor(Math.random() * products.length)];
+  }
+}
 
+/* === 📊 Dashboard HTML === */
+function dashboardHTML() {
+  const trendsList = lastRunData.trends.map(t => `<li>${t.trend} – scor ${t.score}</li>`).join("") || "<li>Niciun trend recent</li>";
+  const scoresTable = lastRunData.scores.length > 0 ? 
+    `<table border="1"><tr><th>Keyword</th><th>Score</th></tr>${lastRunData.scores.map(s => `<tr><td>${s.keyword}</td><td>${s.score}</td></tr>`).join('')}</table>` : 
+    "<p>Niciun scor recent</p>";
+  
+  return `
+  <html><head>
+  <title>Otto SEO AI Dashboard</title>
+  <meta charset="utf-8">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head><body style="font-family:Arial;padding:30px;">
+  <h1>📊 Otto SEO AI v7 Dashboard</h1>
+  <h2>Trenduri recente</h2>
+  <ul>${trendsList}</ul>
+  <h2>Scoruri SEO (GSC)</h2>
+  ${scoresTable}
+  <canvas id="chart" width="400" height="200"></canvas>
+  <script>
+    const ctx = document.getElementById('chart').getContext('2d');
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: [${lastRunData.scores.map(s => `'${s.keyword.slice(0,10)}'`).join(',')}],
+        datasets: [{ label: 'Scor SEO', data: [${lastRunData.scores.map(s => s.score).join(',')}], backgroundColor: 'rgba(75,192,192,0.2)' }]
+      }
+    });
+  </script>
+  <form id="approve" method="POST" action="/approve">
+  <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
+  <button type="submit" style="padding:10px 20px;">✅ Aproba reoptimizare</button>
+  </form>
+  </body></html>`;
+}
+
+/* === 📧 Email raport === */
 async function sendReportEmail(trend, articleHandle, optimizedProductName, productsLength, scores) {
   const scoresTable = `<table border="1"><tr><th>Keyword</th><th>Score</th></tr>${scores.slice(0,10).map(s => `<tr><td>${s.keyword}</td><td>${s.score}</td></tr>`).join('')}</table>`;
   const html = `
@@ -305,22 +447,23 @@ async function sendReportEmail(trend, articleHandle, optimizedProductName, produ
   }
 }
 
-/* === 🚀 Run === */
+/* === 🚀 Run (FIX: handle trends undefined) === */
 async function runSEOAutomation() {
   console.log("🚀 Started...");
-  await ensureHeaders("Scoruri", ["Data", "Keyword", "Score"]); // FIX: Headers
-  await ensureHeaders("Trenduri", ["Data", "Trend", "Status"]); // Handle
+  await ensureHeaders("Scoruri", ["Data", "Keyword", "Score"]);
+  await ensureHeaders("Trenduri", ["Data", "Trend", "Status"]);
   await ensureHeaders("Rapoarte", ["Data", "Trend", "Articol Handle", "Produs Optimizat", "Nr Produse", "Nr Scoruri"]);
 
   const gsc = await fetchGSCData();
-  const products = await getProducts(); // FIX: Doar eligibile
-  const trends = await fetchGoogleTrends();
-  const recentTrends = await getRecentTrends(); // FIX: Exclude
+  const products = await getProducts();
+  const trends = await fetchGoogleTrends() || []; // FIX: || [] dacă undefined
+  const recentTrends = await getRecentTrends();
 
-  // Pas 1: Trend nou
+  // Pas 1: Trend nou (FIX: nu crash dacă relevant empty)
   const relevant = await filterTrendsWithAI(trends, recentTrends);
   const relevantSorted = relevant.sort((a, b) => b.score - a.score);
-  const trend = relevantSorted[0]?.trend || KEYWORDS[Math.floor(Math.random() * KEYWORDS.length)]; // Fallback din keywords
+  const trend = relevantSorted[0]?.trend || KEYWORDS[Math.floor(Math.random() * KEYWORDS.length)];
+  console.log(`🔍 Trend ales: ${trend} (din ${relevant.length > 0 ? 'Trends AI' : 'KEYWORDS fallback'})`);
   const article = await generateBlogArticle(trend);
   const articleHandle = await createShopifyArticle(article);
 
@@ -332,45 +475,64 @@ async function runSEOAutomation() {
 
   lastRunData = { trends: relevantSorted.slice(0,5), scores };
 
-  // Pas 3: Optimizare (pe products eligibile)
+  // Pas 3: Optimizare
   let optimizedProductName = "Niciunul";
   if (products.length > 0 && scores.length > 0) {
     const midScores = scores.filter(s => Number(s.score) >= 50 && Number(s.score) <= 80).sort((a,b) => Number(a.score) - Number(b.score));
     const targetKeyword = midScores[0] || scores.find(s => Number(s.score) < 80) || scores[0];
+    console.log(`🔍 Keyword țintă: "${targetKeyword.keyword}" (scor ${targetKeyword.score})`);
     const targetProduct = await matchKeywordToProduct(targetKeyword.keyword, products, targetKeyword.score);
     optimizedProductName = targetProduct.title;
+    console.log(`🔄 Reoptimizare: ${optimizedProductName}`);
     const newSeo = await generateSEOContent(targetProduct.title, targetProduct.body_html || "");
     await updateProduct(targetProduct.id, newSeo);
   }
 
-  // Pas 4: Raport & Save
-  saveToSheets("Rapoarte", [dateStr, trend, articleHandle || "Eroare", optimizedProductName, products.length, scores.length]); // FIX: Tab nou
+  // Pas 4: Raport
+  saveToSheets("Rapoarte", [dateStr, trend, articleHandle || "Eroare", optimizedProductName, products.length, scores.length]);
   await sendReportEmail(trend, articleHandle, optimizedProductName, products.length, scores);
 
   console.log("✅ Finished!");
 }
 
-/* === Cron & Server === */
+/* === ⏰ Cron job === */
 cron.schedule("0 6 * * *", runSEOAutomation);
 runSEOAutomation();
 
+/* === 🌐 Express server === */
 app.get("/", (req, res) => res.send("✅ v7 rulează!"));
 app.get("/dashboard", (req, res) => res.send(dashboardHTML()));
 app.get("/run-now", async (req, res) => {
-  const key = req.query.key;
-  if (key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden");
-  runSEOAutomation().then(() => res.send("✅ Pornit! Verifică logs."));
+  try {
+    const key = req.query.key;
+    if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden");
+    runSEOAutomation()
+      .then(() => console.log("🟢 run-now OK"))
+      .catch(e => console.error("🔴 run-now ERR:", e.message));
+    res.send("✅ Rularea a pornit. Verifică logs/email/Sheets.");
+  } catch (e) {
+    res.status(500).send("Eroare: " + e.message);
+  }
 });
+
 app.post("/approve", async (req, res) => {
-  const key = req.body.key;
-  if (key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden");
-  await runSEOAutomation();
-  res.send("✅ Manual OK!");
+  try {
+    const key = req.body.key;
+    if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden");
+    await runSEOAutomation();
+    res.send("✅ Reoptimizare pornită manual!");
+  } catch (e) {
+    res.status(500).send("Eroare: " + e.message);
+  }
 });
 
 app.listen(process.env.PORT || 3000, () => {
-  console.log("🌐 Port 3000");
+  console.log("🌐 Server activ pe portul 3000 (Otto SEO AI v7)");
   if (APP_URL && KEEPALIVE_MINUTES > 0) {
-    setInterval(() => fetch(APP_URL).catch(() => {}), KEEPALIVE_MINUTES * 60 * 1000);
+    setInterval(() => {
+      fetch(APP_URL)
+        .then(() => console.log("🕓 Keep-alive OK"))
+        .catch(e => console.log("⚠️ Keep-alive fail:", e.message));
+    }, KEEPALIVE_MINUTES * 60 * 1000);
   }
 });
