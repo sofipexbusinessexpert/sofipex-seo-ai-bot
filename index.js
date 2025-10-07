@@ -29,7 +29,9 @@ const {
   GOOGLE_KEY_PATH,
   GOOGLE_SHEETS_ID,
   SENDGRID_API_KEY,
-  DASHBOARD_SECRET_KEY = "sofipex-secret"
+  DASHBOARD_SECRET_KEY = "sofipex-secret",
+   APP_URL = process.env.APP_URL || "https://sofipex-seo-ai-bot.onrender.com",
+   KEEPALIVE_MINUTES = Number(process.env.KEEPALIVE_MINUTES || 5)
 } = process.env;
 
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
@@ -263,9 +265,37 @@ app.get("/", (req, res) => res.send("✅ Otto SEO AI v7 rulează corect!"));
 app.get("/dashboard", async (req, res) => {
   res.send(dashboardHTML([{ trend: "Ambalaje eco", score: 92 }, { trend: "Caserole biodegradabile", score: 87 }]));
 });
+// 🔐 Rulează acum manual (util când Render a dormit)
+// Accesezi: /run-now?key=YOUR_SECRET
+app.get("/run-now", async (req, res) => {
+  try {
+    const key = req.query.key;
+    if (!key || key !== (process.env.DASHBOARD_SECRET_KEY || "sofipex-secret")) {
+      return res.status(403).send("Forbidden");
+    }
+    // pornește execuția imediat
+    runSEOAutomation()
+      .then(() => console.log("🟢 run-now OK"))
+      .catch(e => console.error("🔴 run-now ERR:", e.message));
+    res.send("✅ Rularea a pornit. Verifică emailul și Google Sheets.");
+  } catch (e) {
+    res.status(500).send("Eroare: " + e.message);
+  }
+});
+
 app.post("/approve", (req, res) => {
   res.send("✅ Reoptimizare aprobată manual!");
 });
 app.listen(process.env.PORT || 3000, () =>
   console.log("🌐 Server activ pe portul 3000 (Otto SEO AI v7)")
+// 🧊 Keep-alive pentru Render Free: se auto-pinge la fiecare X minute
+if (APP_URL && KEEPALIVE_MINUTES > 0) {
+  setInterval(() => {
+    fetch(APP_URL)
+      .then(() => console.log("🕓 Keep-alive ping OK"))
+      .catch(() => console.log("⚠️ Keep-alive ping fail (ignorat)"));
+  }, KEEPALIVE_MINUTES * 60 * 1000);
+}
+
+           
 );
