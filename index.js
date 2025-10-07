@@ -1,9 +1,8 @@
 /* =====================================================
-   🤖 Otto SEO AI v7.2 — Sofipex Smart SEO (Final)
+   🤖 Otto SEO AI v7.3 — Sofipex Smart SEO (Final)
    -----------------------------------------------------
-   ✅ COREȚIE MAJORĂ: Aprobare funcțională (Middleware fixat)
-   ✅ COREȚIE MAJORĂ: Suprimare Meta Description la aprobare (Nu mai suprascrie textul meta bun)
-   ✅ COREȚIE MAJORĂ: Logica GPT On-Page (Nu mai duplicează descrierea)
+   ✅ CORECȚIE CRITICĂ: Eliminare Duplicare Descriere On-Page
+   ✅ CORECȚIE: Scoatere text "Optim. SEO" din H1-ul propus
    ===================================================== */
 
 import express from "express";
@@ -35,7 +34,6 @@ const openai = new OpenAI({ apiKey: OPENAI_KEY });
 sgMail.setApiKey(SENDGRID_API_KEY);
 const app = express();
 
-// CORECȚIE CRITICĂ: Middleware pentru a citi req.body (necesar pentru /approve-optimization)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -59,20 +57,19 @@ async function getAuth(scopes) {
   });
 }
 
-// CORECȚIE: Logica a fost simplificată pentru a folosi UPDATE (suprascriere pe A1)
 async function ensureHeaders(tab, headers) {
   try {
     if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) return;
     const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
     const sheets = google.sheets({ version: "v4", auth });
     
-    const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEETS_ID, range: `${tab}!1:1`, });
+    const res = await sheets.spreadsheets.values.get({ range: `${tab}!1:1`, spreadsheetId: GOOGLE_SHEETS_ID, });
     const firstRow = res.data.values?.[0] || [];
     
     if (firstRow.join(',').trim() !== headers.join(',').trim()) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEETS_ID,
-        range: `${tab}!A1`, // Suprascrie A1
+        range: `${tab}!A1`,
         valueInputOption: "RAW",
         requestBody: { values: [headers] },
       });
@@ -132,7 +129,7 @@ async function getProducts() {
       const lastOpt = p.metafields?.find(m => m.namespace === "seo" && m.key === "last_optimized_date")?.value;
       const lastDate = lastOpt ? new Date(lastOpt) : null;
       const eligible = !lastDate || (Date.now() - lastDate) > 30 * 24 * 60 * 60 * 1000;
-      return { ...p, last_optimized_date: lastDate, eligible_for_optimization: eligible };
+      return { ...p, last_optimized_date: lastDate, eligible_for_optimization: eligible, body_html: p.body_html || '' };
     }).filter(p => p.eligible_for_optimization);
     console.log(`✅ Eligible products: ${products.length}/${allProducts.length} (cu cooldown 30 zile)`);
     return products;
@@ -262,12 +259,13 @@ async function generateSEOContent(title, body) {
 
 // CORECȚIE CRITICĂ: Ii cerem lui GPT să returneze DOAR BLOCUL NOU de conținut
 async function generateProductPatch(title, existingBody, targetKeyword) {
-  const prompt = `Analizează descrierea produsului: "${existingBody.substring(0, 2000)}". Păstrează toate specificațiile tehnice și informațiile cruciale. Creează un nou paragraf introductiv (max 300 cuvinte) și o secțiune 'Beneficii Cheie' (un <ul> cu 4-5 <li>). Aceste secțiuni trebuie să fie optimizate SEO pentru keyword-ul "${targetKeyword}" și să fie plasate la începutul descrierii. Returnează DOAR BLOCUL DE CONȚINUT NOU (H1, paragrafe și lista UL) ca HTML. NU include descrierea veche. JSON strict: {"new_content_html": "<h1>${title} - Optim. SEO</h1><p>Noul paragraf...</p><ul>...</ul>"}`;
+  // ATENȚIE: Am scos "Optim. SEO" din H1
+  const prompt = `Analizează descrierea produsului: "${existingBody.substring(0, 2000)}". Păstrează toate specificațiile tehnice și informațiile cruciale. Creează un nou paragraf introductiv (max 300 cuvinte) și o secțiune 'Beneficii Cheie' (un <ul> cu 4-5 <li>). Aceste secțiuni trebuie să fie optimizate SEO pentru keyword-ul "${targetKeyword}" și să fie plasate la începutul descrierii. Returnează DOAR BLOCUL DE CONȚINUT NOU (H1, paragrafe și lista UL) ca HTML. NU include descrierea veche. JSON strict: {"new_content_html": "<h1>${title}</h1><p>Noul paragraf...</p><ul>...</ul>"}`;
   try {
     const r = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.5, max_tokens: 3000, });
     const parsed = JSON.parse(r.choices[0].message.content.replace(/```json|```/g, "").trim());
     
-    // Concatenăm BLOCUL NOU cu descrierea VECHE în Node.js
+    // CORECTAT: Acum se face pur și simplu concatenarea Noul Bloc + Descrierea Originală Curată
     const newBodyHtml = parsed.new_content_html + (existingBody || '');
 
     return newBodyHtml;
@@ -335,14 +333,17 @@ async function runSEOAutomation() {
     await updateProduct(targetProduct.id, newSeo); 
     console.log(`✅ Meta-date (Off-Page) aplicate direct pentru ${optimizedProductName}`);
 
-    // B. Generează și Stochează Propunerea Descriere (SEO On-Page)
-    const newBodyHtml = await generateProductPatch(targetProduct.title, targetProduct.body_html || "", targetKeyword.keyword);
+    // B. Generează și Stochează Propunerea Descriere (On-Page)
+    // Colectează descrierea veche *curată* (fără modificările dublate de la rulările anterioare)
+    const oldDescriptionClean = targetProduct.body_html || '';
+
+    const newBodyHtml = await generateProductPatch(targetProduct.title, oldDescriptionClean, targetKeyword.keyword);
     
     proposedOptimization = {
         productId: targetProduct.id,
         productTitle: targetProduct.title,
-        oldDescription: targetProduct.body_html,
-        newDescription: newBodyHtml, // Aceasta conține acum (Noul Bloc + Descrierea Veche)
+        oldDescription: oldDescriptionClean,
+        newDescription: newBodyHtml, // Acesta conține Noul Bloc + Descrierea Veche Curată
         keyword: targetKeyword.keyword,
         timestamp: dateStr
     };
@@ -384,12 +385,11 @@ async function applyProposedOptimization(proposal) {
     }
 }
 
-app.get("/", (req, res) => res.send("✅ v7.2 rulează!"));
+app.get("/", (req, res) => res.send("✅ v7.3 rulează!"));
 app.get("/dashboard", (req, res) => res.send(dashboardHTML()));
 
 app.post("/approve-optimization", async (req, res) => {
     try {
-        // CORECTAT: Express citeste corect req.body.key
         const key = req.body.key;
         if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
         
@@ -427,7 +427,7 @@ app.post("/approve", async (req, res) => {
 });
 
 app.listen(process.env.PORT || 3000, () => {
-  console.log("🌐 Server activ pe portul 3000 (Otto SEO AI v7.2)");
+  console.log("🌐 Server activ pe portul 3000 (Otto SEO AI v7.3)");
   if (APP_URL && KEEPALIVE_MINUTES > 0) {
     setInterval(() => {
       fetch(APP_URL)
@@ -452,7 +452,7 @@ function dashboardHTML() {
             <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
             <button type="submit" style="padding:10px 20px; background-color:#4CAF50; color:white; border:none; cursor:pointer; margin-top:10px;">✅ APROBĂ ȘI APLICĂ MODIFICAREA</button>
         </form>
-    ` : '<h2>✅ Nicio modificare On-Page în așteptare de aprobare.</h2>';
+    ` : '<h2>✅ Niciună modificare On-Page în așteptare de aprobare.</h2>';
 
     return `
     <html><head>
@@ -460,7 +460,7 @@ function dashboardHTML() {
     <meta charset="utf-8">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     </head><body style="font-family:Arial;padding:30px;">
-    <h1>📊 Otto SEO AI v7.2 Dashboard</h1>
+    <h1>📊 Otto SEO AI v7.3 Dashboard</h1>
     ${approvalSection}
     <hr>
     <h2>Trenduri & Analiză</h2>
@@ -483,7 +483,7 @@ async function sendReportEmail(trend, articleHandle, optimizedProductName, produ
         : `<p style="color:green;">✅ Nicio optimizare On-Page în așteptare.</p>`;
 
     const html = `
-        <h1>📅 Raport Otto SEO AI v7.2</h1>
+        <h1>📅 Raport Otto SEO AI v7.3</h1>
         <p>Timp Uman Economisit Rulare Curentă: <b>${timeSavings} ore</b></p>
         <p>Trend: <b>${trend}</b></p>
         <p>Draft Articol: ${articleHandle ? `<a href="https://${SHOP_NAME}.myshopify.com/admin/articles/${articleHandle}">Editează Draft</a>` : 'Eroare'}</p>
@@ -496,7 +496,7 @@ async function sendReportEmail(trend, articleHandle, optimizedProductName, produ
     `;
     try {
         if (!SENDGRID_API_KEY || !EMAIL_TO || !EMAIL_FROM) return;
-        await sgMail.send({ to: EMAIL_TO, from: EMAIL_FROM, subject: `📈 Raport SEO v7.2 (${timeSavings} ore salvate)`, html });
+        await sgMail.send({ to: EMAIL_TO, from: EMAIL_FROM, subject: `📈 Raport SEO v7.3 (${timeSavings} ore salvate)`, html });
     } catch (e) {
         console.error("❌ Email error:", e.message);
     }
