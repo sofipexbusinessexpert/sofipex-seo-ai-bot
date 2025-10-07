@@ -1,9 +1,8 @@
 /* =====================================================
-   🤖 Otto SEO AI v7.6 — Sofipex Smart SEO (Final Stable)
+   🤖 Otto SEO AI v7.7 — Sofipex Smart SEO (Final Stable)
    -----------------------------------------------------
-   ✅ Versiune stabilă, completă (Ready to Run)
-   ✅ FIX CRITIC: Stabilizare GPT cu Retry Logic
-   ✅ FIX CRITIC: Logare corectă a numelui produsului optimizat.
+   ✅ FIX CRITIC: Restabilirea funcționalității GSC (Autentificare robustă)
+   ✅ Logică stabilă: On-Page, Cooldown, Retry GPT
    ===================================================== */
 
 import express from "express";
@@ -48,7 +47,7 @@ const KEYWORDS = [
   "bărci fast food", "eco tray", "cutii burger", "wrap-uri eco", "salate ambalaje"
 ];
 
-/* === Retry Wrapper for External APIs (Esential pentru stabilitate) === */
+/* === Retry Wrapper for External APIs === */
 async function runWithRetry(fn, maxRetries = 3) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
@@ -118,7 +117,6 @@ async function getProducts() {
     return products;
   } catch (e) { return []; }
 }
-// FIX: Adăugăm numele produsului pentru o logare mai clară (optimizedProductName este pasat în updates.productTitle)
 async function updateProduct(id, updates) {
   try {
     if (!updates || (!updates.meta_title && !updates.body_html)) { console.warn("⚠️ Updates lipsă, folosind fallback"); updates = { meta_title: "Fallback Title", meta_description: "Fallback Description SEO Sofipex" }; }
@@ -137,7 +135,6 @@ async function updateProduct(id, updates) {
     });
     if (!res.ok) { const errorText = await res.text(); throw new Error(`HTTP ${res.status} - ${errorText.substring(0, 150)}...`); }
     
-    // Logare îmbunătățită: Afișăm ID-ul și Meta Title-ul
     const logName = updates.meta_title || `ID ${id}`;
     console.log(`✅ Updated: ${logName}. Cooldown set. ${updates.body_html !== undefined ? 'Descriere On-Page aplicată.' : 'Meta-date aplicate.'}`);
   } catch (err) { console.error(`❌ Update product ${id} error:`, err.message); }
@@ -162,7 +159,39 @@ async function createShopifyArticle(article) {
 }
 
 /* === 🔍 GSC & GA Utils === */
-async function fetchGSCData() { /* ... (Logică neschimbată) ... */ return []; }
+// FIX CRITIC: Restabilim autentificarea GSC la varianta cea mai robustă
+async function fetchGSCData() {
+  try {
+    if (!GOOGLE_KEY_PATH) return [];
+    
+    // Autentificare robustă
+    const auth = new google.auth.GoogleAuth({
+      keyFile: GOOGLE_KEY_PATH,
+      scopes: ["https://www.googleapis.com/auth/webmasters.readonly"],
+    });
+    
+    const webmasters = google.webmasters({ version: "v3", auth });
+
+    const endDate = new Date().toISOString().split("T")[0];
+    const startDate = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+    
+    const res = await webmasters.searchanalytics.query({ 
+      // Am confirmat că URL-ul din cod este corect, deci problema e autentificarea
+      siteUrl: "https://www.sofipex.ro/", 
+      requestBody: { startDate, endDate, dimensions: ["query"], rowLimit: 25 }, 
+    });
+    
+    const rows = res.data.rows?.map((r) => {
+      const rowData = { keyword: r.keys[0], clicks: r.clicks, impressions: r.impressions, ctr: (r.ctr * 100).toFixed(1), position: r.position.toFixed(1), };
+      rowData.score = calculateSEOScore(rowData);
+      return rowData;
+    }) || [];
+    return rows;
+  } catch (err) { 
+    console.error(`❌ GSC Autentificare Eșuată:`, err.message);
+    return []; 
+  }
+}
 async function fetchGIData() {
   try {
     if (!GOOGLE_KEY_PATH || !GOOGLE_ANALYTICS_PROPERTY_ID) return [];
@@ -202,7 +231,7 @@ async function generateProductPatch(title, existingBody, targetKeyword) {
     return newBodyHtml;
   } catch (e) { 
     console.error(`❌ EROARE CRITICĂ GPT: ${e.message.substring(0, 150)}`);
-    throw e; // Aruncăm eroarea pentru ca runWithRetry să o prindă
+    throw e; 
   }
 }
 async function generateBlogArticle(trend) { 
@@ -215,7 +244,7 @@ async function generateBlogArticle(trend) {
     return article;
   } catch (e) { 
     console.error(`❌ EROARE CRITICĂ GPT: ${e.message.substring(0, 150)}`);
-    throw e; // Aruncăm eroarea pentru ca runWithRetry să o prindă
+    throw e; 
   }
 }
 function calculateSEOScore({ clicks, impressions, ctr }) { /* ... (Logică neschimbată) ... */ return "50.0"; }
@@ -234,10 +263,10 @@ async function runSEOAutomation() {
   proposedOptimization = null;
 
   const [gsc, gaData, products, trends, recentTrends] = await Promise.all([
-    fetchGSCData(), fetchGIData(), getProducts(), fetchGoogleTrends(), getRecentTrends()
+    runWithRetry(fetchGSCData), fetchGIData(), getProducts(), fetchGoogleTrends(), getRecentTrends()
   ]);
   const gscKeywords = gsc;
-
+  
   // Pas 1: Trend nou și Articol Draft
   const relevant = await filterTrendsWithAI(trends, recentTrends, gscKeywords);
   const relevantSorted = relevant.sort((a, b) => b.score - a.score);
@@ -273,7 +302,6 @@ async function runSEOAutomation() {
     // A. Aplică direct Meta-datele (SEO Off-Page) - Setează Cooldown-ul
     const newSeo = await runWithRetry(() => generateSEOContent(targetProduct.title, targetProduct.body_html || ""));
     await updateProduct(targetProduct.id, newSeo); 
-    console.log(`✅ Meta-date (Off-Page) aplicate direct pentru ${optimizedProductName}. PRODUSUL A IEȘIT DIN POOL PENTRU 30 DE ZILE.`);
 
     // B. Generează și Stochează Propunerea Descriere (On-Page)
     const oldDescriptionClean = targetProduct.body_html || '';
@@ -322,7 +350,7 @@ async function applyProposedOptimization(proposal) {
     }
 }
 
-app.get("/", (req, res) => res.send("✅ v7.5 rulează!"));
+app.get("/", (req, res) => res.send("✅ v7.7 rulează!"));
 app.get("/dashboard", (req, res) => res.send(dashboardHTML()));
 
 app.post("/approve-optimization", async (req, res) => {
@@ -364,7 +392,7 @@ app.post("/approve", async (req, res) => {
 });
 
 app.listen(process.env.PORT || 3000, () => {
-  console.log("🌐 Server activ pe portul 3000 (Otto SEO AI v7.5)");
+  console.log("🌐 Server activ pe portul 3000 (Otto SEO AI v7.7)");
   if (APP_URL && KEEPALIVE_MINUTES > 0) {
     setInterval(() => {
       fetch(APP_URL)
@@ -397,7 +425,7 @@ function dashboardHTML() {
     <meta charset="utf-8">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     </head><body style="font-family:Arial;padding:30px;">
-    <h1>📊 Otto SEO AI v7.5 Dashboard</h1>
+    <h1>📊 Otto SEO AI v7.7 Dashboard</h1>
     ${approvalSection}
     <hr>
     <h2>Trenduri & Analiză</h2>
@@ -420,7 +448,7 @@ async function sendReportEmail(trend, articleHandle, optimizedProductName, produ
         : `<p style="color:green;">✅ Nicio optimizare On-Page în așteptare.</p>`;
 
     const html = `
-        <h1>📅 Raport Otto SEO AI v7.5</h1>
+        <h1>📅 Raport Otto SEO AI v7.7</h1>
         <p>Timp Uman Economisit Rulare Curentă: <b>${timeSavings} ore</b></p>
         <p>Trend: <b>${trend}</b></p>
         <p>Draft Articol: ${articleHandle ? `<a href="https://${SHOP_NAME}.myshopify.com/admin/articles/${articleHandle}">Editează Draft</a>` : 'Eroare'}</p>
@@ -433,7 +461,7 @@ async function sendReportEmail(trend, articleHandle, optimizedProductName, produ
     `;
     try {
         if (!SENDGRID_API_KEY || !EMAIL_TO || !EMAIL_FROM) return;
-        await sgMail.send({ to: EMAIL_TO, from: EMAIL_FROM, subject: `📈 Raport SEO v7.5 (${timeSavings} ore salvate)`, html });
+        await sgMail.send({ to: EMAIL_TO, from: EMAIL_FROM, subject: `📈 Raport SEO v7.7 (${timeSavings} ore salvate)`, html });
     } catch (e) {
         console.error("❌ Email error:", e.message);
     }
