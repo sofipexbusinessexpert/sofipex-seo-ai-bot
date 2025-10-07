@@ -578,12 +578,6 @@ async function runSEOAutomation() {
 
     // A. Generează meta propuse (NU aplica încă)
     const proposedSeo = await runWithRetry(() => generateSEOContent(targetProduct.title, targetProduct.body_html || ""));
-    const proposedSeoB = { ...proposedSeo };
-    try {
-      const alt = await runWithRetry(() => generateSEOContent(`${targetProduct.title} – Variant`, targetProduct.body_html || ""));
-      proposedSeoB.meta_title = alt.meta_title;
-      proposedSeoB.meta_description = alt.meta_description;
-    } catch {}
     // Prepare simple A/B by creating a synonymic variant (fallback if GPT fails)
     const proposedSeoB = { ...proposedSeo };
     try {
@@ -629,6 +623,12 @@ async function runSEOAutomation() {
     optimizedProductName = targetProduct.title;
     // Doar propune meta când nu avem scoruri
     const proposedSeo = await runWithRetry(() => generateSEOContent(targetProduct.title, targetProduct.body_html || ""));
+    const proposedSeoB = { ...proposedSeo };
+    try {
+      const alt = await runWithRetry(() => generateSEOContent(`${targetProduct.title} – Variant`, targetProduct.body_html || ""));
+      proposedSeoB.meta_title = alt.meta_title;
+      proposedSeoB.meta_description = alt.meta_description;
+    } catch {}
     const oldDescriptionClean = targetProduct.body_html || '';
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
