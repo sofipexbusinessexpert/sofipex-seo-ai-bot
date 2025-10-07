@@ -165,10 +165,32 @@ async function addOptimizedProductId(id) {
   await setStateValue("optimized_product_ids", Array.from(set).join(','));
 }
 
+async function getBlacklistedProductIds() {
+  const raw = await getStateValue("blacklist_product_ids");
+  if (!raw) return new Set();
+  try {
+    const arr = String(raw).split(',').map(s => s.trim()).filter(Boolean);
+    return new Set(arr);
+  } catch {
+    return new Set();
+  }
+}
+async function addBlacklistedProductId(id) {
+  const set = await getBlacklistedProductIds();
+  set.add(String(id));
+  await setStateValue("blacklist_product_ids", Array.from(set).join(','));
+}
+async function removeBlacklistedProductId(id) {
+  const set = await getBlacklistedProductIds();
+  set.delete(String(id));
+  await setStateValue("blacklist_product_ids", Array.from(set).join(','));
+}
+
 async function chooseNextProduct(products) {
   if (!products || products.length === 0) throw new Error("No products available");
   const optimizedSet = await getOptimizedProductIds();
-  const candidates = products.filter(p => !optimizedSet.has(String(p.id)));
+  const blacklistedSet = await getBlacklistedProductIds();
+  const candidates = products.filter(p => !optimizedSet.has(String(p.id)) && !blacklistedSet.has(String(p.id)));
   const pool = candidates.length > 0 ? candidates : products;
   const productsSorted = [...pool].sort((a, b) => Number(a.id) - Number(b.id));
   const lastIdRaw = await getStateValue("last_onpage_product_id");
@@ -613,7 +635,10 @@ app.post("/reject-optimization", async (req, res) => {
     try {
         const key = req.body.key;
         if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
-        // Do not apply the current proposal, just clear and rotate
+        // Do not apply the current proposal, add product to blacklist and rotate
+        if (proposedOptimization) {
+          await addBlacklistedProductId(proposedOptimization.productId);
+        }
         proposedOptimization = null;
         await prepareNextOnPageProposal();
         return res.redirect(303, "/dashboard");
@@ -654,6 +679,54 @@ app.post("/regenerate-optimization", async (req, res) => {
           currentMetaTitle: metaTitleCurrent,
           currentMetaDescription: metaDescCurrent
         };
+        return res.redirect(303, "/dashboard");
+    } catch (e) {
+        res.status(500).send("Eroare: " + e.message);
+    }
+});
+
+app.post("/regenerate-meta-only", async (req, res) => {
+    try {
+        const key = req.body.key;
+        if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
+        if (!proposedOptimization) return res.redirect(303, "/propose-next?key=" + encodeURIComponent(DASHBOARD_SECRET_KEY));
+        const products = await getProducts();
+        const current = products.find(p => String(p.id) === String(proposedOptimization.productId));
+        if (!current) { proposedOptimization = null; return res.redirect(303, "/dashboard"); }
+        const seo = await runWithRetry(() => generateSEOContent(current.title, current.body_html || ""));
+        proposedOptimization.proposedMetaTitle = seo.meta_title;
+        proposedOptimization.proposedMetaDescription = seo.meta_description;
+        return res.redirect(303, "/dashboard");
+    } catch (e) {
+        res.status(500).send("Eroare: " + e.message);
+    }
+});
+
+app.post("/regenerate-description-only", async (req, res) => {
+    try {
+        const key = req.body.key;
+        if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
+        if (!proposedOptimization) return res.redirect(303, "/propose-next?key=" + encodeURIComponent(DASHBOARD_SECRET_KEY));
+        const products = await getProducts();
+        const current = products.find(p => String(p.id) === String(proposedOptimization.productId));
+        if (!current) { proposedOptimization = null; return res.redirect(303, "/dashboard"); }
+        const titleKeywords = extractKeywordsFromTitle(current.title);
+        const oldDescriptionClean = current.body_html || '';
+        let newBodyHtml = oldDescriptionClean;
+        try { newBodyHtml = await runWithRetry(() => generateProductPatch(current.title, oldDescriptionClean, titleKeywords)); } catch {}
+        proposedOptimization.newDescription = newBodyHtml;
+        return res.redirect(303, "/dashboard");
+    } catch (e) {
+        res.status(500).send("Eroare: " + e.message);
+    }
+});
+app.post("/unblacklist", async (req, res) => {
+    try {
+        const key = req.body.key;
+        if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
+        if (proposedOptimization) {
+          await removeBlacklistedProductId(proposedOptimization.productId);
+        }
         return res.redirect(303, "/dashboard");
     } catch (e) {
         res.status(500).send("Eroare: " + e.message);
@@ -725,9 +798,21 @@ function dashboardHTML() {
             <input type="password" name="password" placeholder="Parolă aplicare" style="padding:6px; margin-right:8px;" ${APPLY_PASSWORD ? '' : 'disabled placeholder="(fără parolă)"'}>
             <button type="submit" style="padding:10px 20px; background-color:#4CAF50; color:white; border:none; cursor:pointer; margin-top:10px;">✅ APROBĂ ȘI APLICĂ MODIFICAREA</button>
         </form>
+        <form method="POST" action="/regenerate-meta-only" style="display:inline-block; margin-left:10px;">
+            <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
+            <button type="submit" style="padding:10px 20px; background-color:#10b981; color:white; border:none; cursor:pointer; margin-top:10px;">📝 REGENEREAZĂ META</button>
+        </form>
+        <form method="POST" action="/regenerate-description-only" style="display:inline-block; margin-left:10px;">
+            <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
+            <button type="submit" style="padding:10px 20px; background-color:#f59e0b; color:white; border:none; cursor:pointer; margin-top:10px;">📄 REGENEREAZĂ DESCRIEREA</button>
+        </form>
         <form method="POST" action="/reject-optimization" style="display:inline-block;">
             <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
             <button type="submit" style="padding:10px 20px; background-color:#b91c1c; color:white; border:none; cursor:pointer; margin-top:10px;">❌ REFUZĂ (sari la alt produs)</button>
+        </form>
+        <form method="POST" action="/unblacklist" style="display:inline-block; margin-left:10px;">
+            <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
+            <button type="submit" style="padding:10px 20px; background-color:#6b7280; color:white; border:none; cursor:pointer; margin-top:10px;">↩️ REINCLUDE PRODUS</button>
         </form>
         <form method="POST" action="/regenerate-optimization" style="display:inline-block; margin-left:10px;">
             <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
