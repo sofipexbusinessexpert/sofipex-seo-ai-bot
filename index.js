@@ -39,6 +39,7 @@ app.use(express.urlencoded({ extended: true }));
 
 let lastRunData = { trends: [], scores: [], gaData: [] };
 let proposedOptimization = null;
+let localState = {};
 
 const KEYWORDS = [
   "cutii pizza", "ambalaje biodegradabile", "pahare carton", "caserole eco", "tăvițe fast food",
@@ -89,6 +90,95 @@ async function saveToSheets(tab, values) {
     console.log(`✅ Sheets ${tab}: Data appended`);
   } catch (err) { console.error(`❌ Sheets ${tab} error:`, err.message); }
 }
+
+// === App State (persisted in Google Sheets 'State' tab, with in-memory fallback) ===
+async function getStateValue(key) {
+  try {
+    if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) return localState[key];
+    const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
+    const sheets = google.sheets({ version: "v4", auth });
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEETS_ID, range: "State!A:B" });
+    const rows = res.data.values || [];
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][0] === key) return rows[i][1];
+    }
+    return undefined;
+  } catch (e) {
+    return localState[key];
+  }
+}
+async function setStateValue(key, value) {
+  try {
+    if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) { localState[key] = String(value); return; }
+    const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
+    const sheets = google.sheets({ version: "v4", auth });
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEETS_ID, range: "State!A:B" });
+    const rows = res.data.values || [];
+    let rowIndex = -1;
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][0] === key) { rowIndex = i + 1; break; }
+    }
+    if (rowIndex === -1) {
+      await sheets.spreadsheets.values.append({ spreadsheetId: GOOGLE_SHEETS_ID, range: "State!A:B", valueInputOption: "RAW", requestBody: { values: [[key, String(value)]] } });
+    } else {
+      await sheets.spreadsheets.values.update({ spreadsheetId: GOOGLE_SHEETS_ID, range: `State!B${rowIndex}`, valueInputOption: "RAW", requestBody: { values: [[String(value)]] } });
+    }
+  } catch (e) {
+    localState[key] = String(value);
+  }
+}
+
+async function chooseNextProduct(products) {
+  if (!products || products.length === 0) throw new Error("No products available");
+  const productsSorted = [...products].sort((a, b) => Number(a.id) - Number(b.id));
+  const lastIdRaw = await getStateValue("last_onpage_product_id");
+  const lastId = lastIdRaw ? String(lastIdRaw) : null;
+  let nextIndex = 0;
+  if (lastId) {
+    const currentIndex = productsSorted.findIndex(p => String(p.id) === lastId);
+    nextIndex = currentIndex >= 0 ? (currentIndex + 1) % productsSorted.length : 0;
+  }
+  const chosen = productsSorted[nextIndex];
+  await setStateValue("last_onpage_product_id", chosen.id);
+  return chosen;
+}
+
+async function prepareNextOnPageProposal() {
+  try {
+    const [products, gsc] = await Promise.all([
+      getProducts(),
+      (async () => { try { return await runWithRetry(fetchGSCData); } catch { return []; } })()
+    ]);
+    if (!products || products.length === 0) { proposedOptimization = null; return; }
+
+    const scores = Array.isArray(gsc) ? gsc : [];
+    const midScores = scores.filter(s => Number(s.score) >= 50 && Number(s.score) <= 80).sort((a,b) => Number(a.score) - Number(b.score));
+    const targetKeyword = midScores[0] || scores.find(s => Number(s.score) < 80) || { keyword: KEYWORDS[0] };
+
+    const targetProduct = await chooseNextProduct(products);
+    const oldDescriptionClean = targetProduct.body_html || '';
+    let newBodyHtml = oldDescriptionClean;
+    try {
+      newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, targetKeyword.keyword));
+    } catch (e) {
+      console.error("🔴 Nu s-a putut genera propunerea On-Page pentru produsul următor.");
+    }
+
+    const dateStr = new Date().toLocaleString("ro-RO");
+    proposedOptimization = {
+      productId: targetProduct.id,
+      productTitle: targetProduct.title,
+      oldDescription: oldDescriptionClean,
+      newDescription: newBodyHtml,
+      keyword: targetKeyword.keyword,
+      timestamp: dateStr
+    };
+    console.log(`🔄 Următoarea propunere On-Page pregătită pentru ${targetProduct.title}.`);
+  } catch (e) {
+    console.error("❌ Eroare la pregătirea următoarei propuneri On-Page:", e.message);
+    proposedOptimization = null;
+  }
+}
 async function getRecentTrends(days = 30) {
   try {
     const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
@@ -113,7 +203,7 @@ async function getProducts() {
       const lastDate = lastOpt ? new Date(lastOpt) : null;
       const eligible = !lastDate || (Date.now() - lastDate) > 30 * 24 * 60 * 60 * 1000;
       return { ...p, last_optimized_date: lastDate, eligible_for_optimization: eligible, body_html: p.body_html || '' };
-    }).filter(p => p.eligible_for_optimization);
+    });
     return products;
   } catch (e) { return []; }
 }
@@ -259,6 +349,7 @@ async function runSEOAutomation() {
   await ensureHeaders("Trenduri", ["Data", "Trend", "Status"]);
   await ensureHeaders("Rapoarte", ["Data", "Trend", "Articol Handle", "Produs Optimizat", "Nr Produse", "Nr Scoruri", "Ore Economisite"]);
   await ensureHeaders("Analytics", ["Data", "Page Path", "Active Users", "Sessions"]);
+  await ensureHeaders("State", ["Key", "Value"]);
 
   proposedOptimization = null;
 
@@ -296,7 +387,7 @@ async function runSEOAutomation() {
   if (products.length > 0 && scores.length > 0) {
     const midScores = scores.filter(s => Number(s.score) >= 50 && Number(s.score) <= 80).sort((a,b) => Number(a.score) - Number(b.score));
     const targetKeyword = midScores[0] || scores.find(s => Number(s.score) < 80) || scores[0];
-    const targetProduct = await matchKeywordToProduct(targetKeyword.keyword, products, targetKeyword.score);
+    const targetProduct = await chooseNextProduct(products);
     optimizedProductName = targetProduct.title;
 
     // A. Aplică direct Meta-datele (SEO Off-Page) - Setează Cooldown-ul
@@ -318,7 +409,7 @@ async function runSEOAutomation() {
     console.log(`🔄 Propunere On-Page generată și stocată pentru ${targetProduct.title}. Așteaptă aprobare.`);
 
   } else if (products.length > 0) {
-    const targetProduct = products[Math.floor(Math.random() * products.length)];
+    const targetProduct = await chooseNextProduct(products);
     optimizedProductName = targetProduct.title;
     const newSeo = await runWithRetry(() => generateSEOContent(targetProduct.title, targetProduct.body_html || ""));
     await updateProduct(targetProduct.id, newSeo);
@@ -365,7 +456,8 @@ app.post("/approve-optimization", async (req, res) => {
         
         if (success) {
             proposedOptimization = null;
-            res.send(`✅ Descriere Produs ${proposalToApply.productTitle} a fost aplicată!`);
+            await prepareNextOnPageProposal();
+            return res.redirect(303, "/dashboard");
         } else {
             res.status(500).send("❌ Eroare la aplicarea optimizării. Verifică log-urile.");
         }
@@ -417,7 +509,7 @@ function dashboardHTML() {
             <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
             <button type="submit" style="padding:10px 20px; background-color:#4CAF50; color:white; border:none; cursor:pointer; margin-top:10px;">✅ APROBĂ ȘI APLICĂ MODIFICAREA</button>
         </form>
-    ` : '<h2>✅ Niciună modificare On-Page în așteptare de aprobare.</h2>';
+    ` : '<h2>✅ Niciună modificare On-Page în așteptare de aprobare.</h2><form method="GET" action="/run-now"><input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}"><button type="submit" style="padding:8px 14px;">🔄 Generează următoarea propunere</button></form>';
 
     return `
     <html><head>
