@@ -157,9 +157,10 @@ async function prepareNextOnPageProposal() {
 
     const targetProduct = await chooseNextProduct(products);
     const oldDescriptionClean = targetProduct.body_html || '';
+    const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
     try {
-      newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, targetKeyword.keyword));
+      newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords));
     } catch (e) {
       console.error("🔴 Nu s-a putut genera propunerea On-Page pentru produsul următor.");
     }
@@ -304,6 +305,21 @@ async function fetchGIData() {
 async function fetchGoogleTrends() { /* ... (Logică neschimbată) ... */ return KEYWORDS; }
 async function filterTrendsWithAI(trends, recentTrends = [], gscKeywords = []) { /* ... (Logică neschimbată) ... */ return KEYWORDS.map(t => ({ trend: t, score: 80 })); }
 
+function extractKeywordsFromTitle(title) {
+  const raw = String(title || '').toLowerCase();
+  const cleaned = raw
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9ăâîșţțș\-\s]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const stop = new Set([
+    'si','sau','de','din','cu','fara','pentru','la','pe','in','un','o','ale','al','a','the','and','or','of','for','to','with','by','on','in','set','buc','bucati','bucată'
+  ]);
+  const tokens = cleaned.split(' ').filter(w => w.length > 1 && !stop.has(w));
+  const unique = Array.from(new Set(tokens));
+  return unique.slice(0, 8).join(', ');
+}
+
 async function generateSEOContent(title, body) {
   const bodySnippet = (body || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1200);
   const prompt = `Ai denumirea produsului: "${title}" și un fragment din descrierea/fișa tehnică (HTML curățat): "${bodySnippet}". 
@@ -315,20 +331,20 @@ Returnează JSON STRICT: {"meta_title": "...", "meta_description": "..."}`;
     return parsed;
   } catch (e) { return { meta_title: title, meta_description: `Ambalaje eco de calitate de la Sofipex. ${title.substring(0, 100)}.` }; }
 }
-async function generateProductPatch(title, existingBody, targetKeyword) {
+async function generateProductPatch(title, existingBody, titleKeywords) {
   const bodySnippet = (existingBody || '').slice(0, 4000);
-  const prompt = `Denumire produs: "${title}". Keyword țintă: "${targetKeyword}".
+  const prompt = `Denumire produs: "${title}". Keywords din titlu (prioritare SEO): "${titleKeywords}".
 Ai mai jos descrierea existentă (HTML) inclusiv posibile specificații tehnice:
 """
 ${bodySnippet}
 """
 Instrucțiuni:
-1) Extrage și respectă specificațiile tehnice existente (nu le șterge, nu le altera). Dacă nu există o secțiune clară, creează una intitulată "Specificații Tehnice" folosind lista disponibilă în text (păstrează valorile exacte).
+1) Identifică și păstrează neschimbate specificațiile tehnice existente. NU le elimina și NU le rescrie. Dacă nu există o secțiune clară, creează una intitulată "Specificații Tehnice" folosind datele din text (păstrează valorile exacte). Evită DUPLICAREA acestei secțiuni dacă există deja.
 2) Creează un paragraf introductiv (<=300 cuvinte) care mapează beneficiile la atributele cheie (material, dimensiune, capacitate, grosime, temperatură, certificări) relevante pentru SEO și conversie.
-3) Adaugă o secțiune "Beneficii Cheie" (un <ul> cu 4-5 <li>) cu formulări naturale, incluzând sinonime/variații semantice (LSI) derivate din denumire și specificații. Evită repetări forțate.
+3) Adaugă o secțiune "Beneficii Cheie" (un <ul> cu 4-5 <li>) cu formulări naturale, incluzând sinonime/variații semantice (LSI) derivate din cuvintele din titlu și din specificații. Evită repetări forțate.
 4) Păstrează restul conținutului existent DUPĂ blocul nou.
-5) Conținutul trebuie să fie în română, să evite superlative generale și să integreze keyword-ul țintă în mod natural.
-Returnează DOAR BLOCUL NOU (fără descrierea veche) ca HTML valid și compact: {"new_content_html": "<h1>${title}</h1><p>...</p><ul>...</ul>"}. JSON STRICT.`;
+5) Conținutul trebuie să fie în română, să evite superlative generale și să integreze în mod natural cuvintele-cheie extrase din titlu. Evită H1 suplimentar în descriere; folosește <h2> pentru heading.
+Returnează DOAR BLOCUL NOU (fără descrierea veche) ca HTML valid și compact: {"new_content_html": "<h2>${title}</h2><p>...</p><ul>...</ul>"}. JSON STRICT.`;
   try {
     const r = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.5, max_tokens: 3000, });
     const parsed = JSON.parse(r.choices[0].message.content.replace(/```json|```/g, "").trim());
@@ -411,9 +427,10 @@ async function runSEOAutomation() {
 
     // B. Generează și Stochează Propunerea Descriere (On-Page)
     const oldDescriptionClean = targetProduct.body_html || '';
+    const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
     try {
-        newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, targetKeyword.keyword));
+        newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords));
     } catch (e) {
         console.error("🔴 ESEC FINAL: On-Page patch nu a putut fi generat.");
     }
