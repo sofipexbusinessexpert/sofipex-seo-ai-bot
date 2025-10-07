@@ -305,7 +305,10 @@ async function fetchGoogleTrends() { /* ... (Logică neschimbată) ... */ return
 async function filterTrendsWithAI(trends, recentTrends = [], gscKeywords = []) { /* ... (Logică neschimbată) ... */ return KEYWORDS.map(t => ({ trend: t, score: 80 })); }
 
 async function generateSEOContent(title, body) {
-  const prompt = `Creează meta title (max 60 caractere) și meta descriere (max 160 caractere) profesionale, optimizate SEO pentru produsul: "${title}". Returnează JSON strict: {"meta_title": "...", "meta_description": "..."}`;
+  const bodySnippet = (body || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1200);
+  const prompt = `Ai denumirea produsului: "${title}" și un fragment din descrierea/fișa tehnică (HTML curățat): "${bodySnippet}". 
+Creează meta title (<=60) și meta descriere (<=160) profesioniste, optimizate SEO. Folosește 1-2 atribute puternice extrase din titlu/specificații (ex: material, capacitate, dimensiune, compatibilitate) pentru a crește CTR. Evită stuffing, păstrează limbaj natural în română.
+Returnează JSON STRICT: {"meta_title": "...", "meta_description": "..."}`;
   try {
     const r = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.3, });
     const parsed = JSON.parse(r.choices[0].message.content.replace(/```json|```/g, "").trim());
@@ -313,7 +316,19 @@ async function generateSEOContent(title, body) {
   } catch (e) { return { meta_title: title, meta_description: `Ambalaje eco de calitate de la Sofipex. ${title.substring(0, 100)}.` }; }
 }
 async function generateProductPatch(title, existingBody, targetKeyword) {
-  const prompt = `Analizează descrierea produsului: "${existingBody.substring(0, 2000)}". Păstrează toate specificațiile tehnice și informațiile cruciale. Creează un nou paragraf introductiv (max 300 cuvinte) și o secțiune 'Beneficii Cheie' (un <ul> cu 4-5 <li>). Aceste secțiuni trebuie să fie optimizate SEO pentru keyword-ul "${targetKeyword}" și să fie plasate la începutul descrierii. Returnează DOAR BLOCUL DE CONȚINUT NOU (H1, paragrafe și lista UL) ca HTML. NU include descrierea veche. JSON strict: {"new_content_html": "<h1>${title}</h1><p>Noul paragraf...</p><ul>...</ul>"}`;
+  const bodySnippet = (existingBody || '').slice(0, 4000);
+  const prompt = `Denumire produs: "${title}". Keyword țintă: "${targetKeyword}".
+Ai mai jos descrierea existentă (HTML) inclusiv posibile specificații tehnice:
+"""
+${bodySnippet}
+"""
+Instrucțiuni:
+1) Extrage și respectă specificațiile tehnice existente (nu le șterge, nu le altera). Dacă nu există o secțiune clară, creează una intitulată "Specificații Tehnice" folosind lista disponibilă în text (păstrează valorile exacte).
+2) Creează un paragraf introductiv (<=300 cuvinte) care mapează beneficiile la atributele cheie (material, dimensiune, capacitate, grosime, temperatură, certificări) relevante pentru SEO și conversie.
+3) Adaugă o secțiune "Beneficii Cheie" (un <ul> cu 4-5 <li>) cu formulări naturale, incluzând sinonime/variații semantice (LSI) derivate din denumire și specificații. Evită repetări forțate.
+4) Păstrează restul conținutului existent DUPĂ blocul nou.
+5) Conținutul trebuie să fie în română, să evite superlative generale și să integreze keyword-ul țintă în mod natural.
+Returnează DOAR BLOCUL NOU (fără descrierea veche) ca HTML valid și compact: {"new_content_html": "<h1>${title}</h1><p>...</p><ul>...</ul>"}. JSON STRICT.`;
   try {
     const r = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.5, max_tokens: 3000, });
     const parsed = JSON.parse(r.choices[0].message.content.replace(/```json|```/g, "").trim());
@@ -466,6 +481,19 @@ app.post("/approve-optimization", async (req, res) => {
     }
 });
 
+app.post("/reject-optimization", async (req, res) => {
+    try {
+        const key = req.body.key;
+        if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
+        // Do not apply the current proposal, just clear and rotate
+        proposedOptimization = null;
+        await prepareNextOnPageProposal();
+        return res.redirect(303, "/dashboard");
+    } catch (e) {
+        res.status(500).send("Eroare: " + e.message);
+    }
+});
+
 app.get("/run-now", async (req, res) => {
     try {
         const key = req.query.key;
@@ -505,9 +533,13 @@ function dashboardHTML() {
         <h2>⚠️ Propunere On-Page (Aprobare Manuală)</h2>
         <p>Produs: <b>${proposedOptimization.productTitle}</b> (Keyword: ${proposedOptimization.keyword})</p>
         <textarea style="width:100%; height:150px; font-family:monospace; font-size:12px;" readonly>-- DESCRIERE VECHE (fragment) --\n${proposedOptimization.oldDescription?.substring(0, 500) || 'N/A'}\n\n-- DESCRIERE NOUĂ PROPUSĂ (fragment) --\n${proposedOptimization.newDescription?.substring(0, 500) || 'Eroare generare'}</textarea>
-        <form method="POST" action="/approve-optimization">
+        <form method="POST" action="/approve-optimization" style="display:inline-block; margin-right:10px;">
             <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
             <button type="submit" style="padding:10px 20px; background-color:#4CAF50; color:white; border:none; cursor:pointer; margin-top:10px;">✅ APROBĂ ȘI APLICĂ MODIFICAREA</button>
+        </form>
+        <form method="POST" action="/reject-optimization" style="display:inline-block;">
+            <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
+            <button type="submit" style="padding:10px 20px; background-color:#b91c1c; color:white; border:none; cursor:pointer; margin-top:10px;">❌ REFUZĂ (sari la alt produs)</button>
         </form>
     ` : '<h2>✅ Niciună modificare On-Page în așteptare de aprobare.</h2><form method="GET" action="/run-now"><input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}"><button type="submit" style="padding:8px 14px;">🔄 Generează următoarea propunere</button></form>';
 
