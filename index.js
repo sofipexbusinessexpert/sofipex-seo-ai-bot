@@ -298,15 +298,11 @@ async function fetchGSCData() {
   }
 }
 
-/* === 📊 Google Analytics 4 Data API v1 (Enhanced with retries) === */
+/* === 📊 Google Analytics 4 Data API v1 (Versiune Finală Debug) === */
 async function fetchGIData() {
   try {
-    if (!GOOGLE_KEY_PATH) {
-      console.warn("⚠️ GA skipped - GOOGLE_KEY_PATH missing");
-      return [];
-    }
-    if (!GOOGLE_ANALYTICS_PROPERTY_ID) {
-      console.warn("⚠️ GA skipped - GOOGLE_ANALYTICS_PROPERTY_ID missing (add to .env: properties/XXXXXX)");
+    if (!GOOGLE_KEY_PATH || !GOOGLE_ANALYTICS_PROPERTY_ID) {
+      console.warn("⚠️ GA skipped - Config lipsă (Key Path sau Property ID)");
       return [];
     }
 
@@ -314,67 +310,66 @@ async function fetchGIData() {
       keyFile: GOOGLE_KEY_PATH,
       scopes: ["https://www.googleapis.com/auth/analytics.readonly"],
     });
-    console.log(`🔍 GA auth initialized | Property: ${GOOGLE_ANALYTICS_PROPERTY_ID}`);
 
-    // Test authentication
+    // Clientul autentificat este necesar pentru a inițializa corect analyticsdata
     const authClient = await auth.getClient();
-    if (!authClient) {
-      console.error("❌ GA authentication failed - invalid client or credentials");
-      return [];
-    }
-
     const analyticsdata = google.analyticsdata({ version: "v1beta", auth: authClient });
-    if (!analyticsdata || !analyticsdata.reports || !analyticsdata.reports.run) {
-      console.error("❌ GA API not available - ensure Data API is enabled in Google Cloud Console");
-      return [];
+
+    // VERIFICARE CRITICĂ: Asigură-te că API-ul este inițializat corect
+    if (!analyticsdata || !analyticsdata.reports || typeof analyticsdata.reports.run !== 'function') {
+      console.error("❌ GA API client failed to initialize correctly. Check Cloud Console API enablement.");
+      // Adaugă o pauză și o reîncercare simplă înainte de a returna []
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      if (typeof analyticsdata.reports.run !== 'function') return [];
     }
 
+    const gaProperty = `properties/${GOOGLE_ANALYTICS_PROPERTY_ID}`;
+    console.log(`🔍 GA auth OK | Property ID trimis la API: ${gaProperty}`);
+    
     const endDate = new Date().toISOString().split("T")[0];
     const startDate = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
     console.log(`🔍 GA query: ${startDate} to ${endDate}`);
 
-    // Attempt to run the report with retries
     const maxRetries = 3;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const [response] = await analyticsdata.reports.run({
           auth: authClient,
-          property: `properties/${GOOGLE_ANALYTICS_PROPERTY_ID}`,
+          property: gaProperty, // Folosește variabila locală
           requestBody: {
             dateRanges: [{ startDate, endDate }],
             dimensions: [{ name: "pagePath" }],
-            metrics: [
-              { name: "activeUsers" },
-              { name: "sessions" }
-            ],
+            metrics: [{ name: "activeUsers" }, { name: "sessions" }],
             limit: 25,
           },
         });
-
+        
+        // ... restul logicii de procesare a răspunsului (rândurile rows)
         const rows = response.rows?.map((row) => ({
           pagePath: row.dimensionValues[0].value,
           activeUsers: parseInt(row.metricValues[0].value) || 0,
           sessions: parseInt(row.metricValues[1].value) || 0,
         })) || [];
         
-        console.log(`✅ GA Success (Attempt ${attempt}/${maxRetries}): ${rows.length} pages (ex: ${rows[0]?.pagePath || 'none'}, users: ${rows[0]?.activeUsers || 0}, sessions: ${rows[0]?.sessions || 0})`);
+        console.log(`✅ GA Success (Attempt ${attempt}/${maxRetries}): ${rows.length} pages (ex: ${rows[0]?.pagePath || 'none'}, sessions: ${rows[0]?.sessions || 0})`);
         return rows;
 
       } catch (err) {
+        // Logica de retry existentă
         console.error(`❌ GA Attempt ${attempt}/${maxRetries} failed:`, {
           message: err.message,
           code: err.code,
           status: err.status,
           details: err.response?.data?.error?.message || 'No details',
         });
-
-        if (attempt === maxRetries) throw err; // Re-throw on last attempt
+        if (attempt === maxRetries) throw err;
         console.log(`⏳ Retrying GA in 5 seconds... (Attempt ${attempt + 1}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
+        await new Promise(resolve => setTimeout(resolve, 5000));
       }
     }
 
   } catch (err) {
+    // Logica de eroare finală existentă
     console.error("❌ GA Final Error:", {
       message: err.message,
       code: err.code,
@@ -388,8 +383,6 @@ async function fetchGIData() {
       console.warn("⚠️ GA 401: Authentication failed. Check GOOGLE_KEY_PATH and API credentials.");
     } else if (err.code === 404) {
       console.warn("⚠️ GA 404: Property not found. Verify GOOGLE_ANALYTICS_PROPERTY_ID format (e.g., 123456789).");
-    } else if (!analyticsdata || !analyticsdata.reports || !analyticsdata.reports.run) {
-      console.warn("⚠️ GA API still not available. Confirm 'Google Analytics Data API' is fully enabled in Google Cloud Console.");
     }
     return [];
   }
