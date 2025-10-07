@@ -1,20 +1,21 @@
 /* =====================================================
-   🤖 Otto SEO AI v7 — Sofipex Smart SEO (Render Ready) — Versiune Fixată v8
+   🤖 Otto SEO AI v7 — Sofipex Smart SEO (Render Ready) — Versiune Fixată v9
    -----------------------------------------------------
    ✅ Integrare Google Trends real-time (România)
-   ✅ GPT filtrare trenduri relevante + AI score (FIX: robust parse JSON + fallback)
-   ✅ GSC 28 zile + scor SEO per produs (FIX: log scoruri, filter >=10)
-   ✅ Shopify SEO auto-update (FIX: fallback newSeo în update)
-   ✅ Dashboard public cu reoptimizare manuală
-   ✅ Google Sheets tab separat (Scoruri + Trenduri + Rapoarte + Analytics) (FIX: batchUpdate pentru insert headers)
+   ✅ GPT filtrare trenduri relevante + AI score
+   ✅ GSC 28 zile + scor SEO per produs
+   ✅ Shopify SEO auto-update
+   ✅ Dashboard public cu reoptimizare manuală (FIX: GA table + chart sessions)
+   ✅ Google Sheets tab separat (Scoruri + Trenduri + Rapoarte + Analytics)
    ✅ SendGrid raport complet
+   ✅ Google Analytics 4 Data API v1 (FIX: log property/scopes/error full, fallback robust)
    ===================================================== 
-   FIX-uri noi:
-   - Sheets: `batchUpdate` cu insertDimensionRangeRequest pentru headers (păstrează istoric).
-   - GPT: Try-catch extins în generateBlogArticle/generateSEOContent; fallback hard-coded dacă parse fail/undefined.
-   - Scores: Log toate scorurile înainte filter; ajust filter la >=10 pentru mai multe.
-   - Optimizare: Fallback {meta_title: title, meta_description: "Fallback"} dacă newSeo undefined.
-   - Trends scrape: Dacă 0, direct KEYWORDS în filter.
+   FIX-uri noi pentru GA & erori:
+   - GA: Log "Property: [ID]", scopes, full err; dacă config lipsă, warn + return [] (nu crash).
+   - Dashboard: GA table + nou chart bar pentru sessions (dacă gaData >0, multi-dataset cu SEO scores).
+   - Sheets: batchUpdate safe (per-tab try-catch); dacă fail, append headers.
+   - Run: Await GA; dacă 0 data, log "GA skipped - config missing".
+   - General: Filter scores >=10; fallback în toate GPT calls.
    */
 
 import express from "express";
@@ -58,7 +59,7 @@ const KEYWORDS = [
   "bărci fast food", "eco tray", "cutii burger", "wrap-uri eco", "salate ambalaje"
 ];
 
-/* === 📥 Google Sheets Utils (FIX: batchUpdate pentru insert headers) === */
+/* === 📥 Google Sheets Utils === */
 async function getAuth(scopes) {
   return new google.auth.GoogleAuth({
     keyFile: GOOGLE_KEY_PATH,
@@ -76,7 +77,6 @@ async function ensureHeaders(tab, headers) {
     });
     const firstRow = res.data.values?.[0] || [];
     if (firstRow.join(',') !== headers.join(',')) {
-      // FIX: batchUpdate cu insert row (nu clear)
       await sheets.spreadsheets.batchUpdate({
         spreadsheetId: GOOGLE_SHEETS_ID,
         resource: {
@@ -84,7 +84,7 @@ async function ensureHeaders(tab, headers) {
             {
               insertDimension: {
                 range: {
-                  sheetId: 0, // Asumă primul sheet
+                  sheetId: 0,
                   dimension: "ROWS",
                   startIndex: 0,
                   endIndex: 1,
@@ -114,6 +114,8 @@ async function ensureHeaders(tab, headers) {
     }
   } catch (err) {
     console.error(`❌ Headers setup error for ${tab}:`, err.message);
+    // Fallback: Append headers
+    await saveToSheets(tab, headers, true);
   }
 }
 
@@ -186,7 +188,6 @@ async function getProducts() {
 
 async function updateProduct(id, updates) {
   try {
-    // FIX: Fallback dacă updates undefined
     if (!updates || !updates.meta_title) {
       console.warn("⚠️ Updates undefined, folosesc fallback");
       updates = { meta_title: "Fallback Title", meta_description: "Fallback Description SEO Sofipex" };
@@ -209,10 +210,9 @@ async function updateProduct(id, updates) {
   }
 }
 
-/* === 📝 Publicare Articol pe Shopify (FIX: fallback article dacă undefined) === */
+/* === 📝 Publicare Articol pe Shopify === */
 async function createShopifyArticle(article) {
   try {
-    // FIX: Fallback dacă article undefined sau lipsă fields
     if (!article || !article.content_html || article.content_html.trim().length < 500) {
       console.error("❌ Conținut insuficient sau article undefined, folosesc fallback");
       article = {
@@ -279,7 +279,7 @@ async function createShopifyArticle(article) {
   }
 }
 
-/* === 🔍 GSC (FIX: log scoruri) === */
+/* === 🔍 GSC === */
 async function fetchGSCData() {
   try {
     if (!GOOGLE_KEY_PATH) {
@@ -306,7 +306,7 @@ async function fetchGSCData() {
         ctr: (r.ctr * 100).toFixed(1),
         position: r.position.toFixed(1),
       };
-      rowData.score = calculateSEOScore(rowData); // Calcul scor aici
+      rowData.score = calculateSEOScore(rowData);
       return rowData;
     }) || [];
     console.log(`✅ GSC: ${rows.length} keywords (ex: ${rows[0]?.keyword || 'none'}), scoruri ex: ${rows.slice(0,3).map(r => `${r.keyword}:${r.score}`).join(', ')}`);
@@ -317,21 +317,26 @@ async function fetchGSCData() {
   }
 }
 
-/* === 📊 Google Analytics 4 Data API v1 === */
+/* === 📊 Google Analytics 4 Data API v1 (FIX: log full error) === */
 async function fetchGIData() {
   try {
-    if (!GOOGLE_KEY_PATH || !GOOGLE_ANALYTICS_PROPERTY_ID) {
-      console.error("❌ GA config lipsă: GOOGLE_KEY_PATH sau GOOGLE_ANALYTICS_PROPERTY_ID");
+    if (!GOOGLE_KEY_PATH) {
+      console.warn("⚠️ GA skipped - GOOGLE_KEY_PATH missing");
+      return [];
+    }
+    if (!GOOGLE_ANALYTICS_PROPERTY_ID) {
+      console.warn("⚠️ GA skipped - GOOGLE_ANALYTICS_PROPERTY_ID missing (add to .env: properties/XXXXXX)");
       return [];
     }
     const auth = new google.auth.GoogleAuth({
       keyFile: GOOGLE_KEY_PATH,
       scopes: ["https://www.googleapis.com/auth/analytics.readonly"],
     });
+    console.log(`🔍 GA auth scopes: analytics.readonly | Property: ${GOOGLE_ANALYTICS_PROPERTY_ID}`);
     const analyticsdata = google.analyticsdata({ version: "v1beta", auth });
     const endDate = new Date().toISOString().split("T")[0];
     const startDate = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-    console.log(`🔍 GA query: ${startDate} to ${endDate}, property: ${GOOGLE_ANALYTICS_PROPERTY_ID}`);
+    console.log(`🔍 GA query: ${startDate} to ${endDate}`);
     const [response] = await analyticsdata.reports.run({
       auth,
       property: GOOGLE_ANALYTICS_PROPERTY_ID,
@@ -347,13 +352,13 @@ async function fetchGIData() {
     });
     const rows = response.rows?.map((row) => ({
       pagePath: row.dimensionValues[0].value,
-      activeUsers: parseInt(row.metricValues[0].value),
-      sessions: parseInt(row.metricValues[1].value),
+      activeUsers: parseInt(row.metricValues[0].value) || 0,
+      sessions: parseInt(row.metricValues[1].value) || 0,
     })) || [];
-    console.log(`✅ GA: ${rows.length} pagini (ex: ${rows[0]?.pagePath || 'none'}, users: ${rows[0]?.activeUsers || 0})`);
+    console.log(`✅ GA: ${rows.length} pagini (ex: ${rows[0]?.pagePath || 'none'}, users: ${rows[0]?.activeUsers || 0}, sessions: ${rows[0]?.sessions || 0})`);
     return rows;
   } catch (err) {
-    console.error("❌ GA error details:", err.message);
+    console.error("❌ GA error full:", err.response?.data || err.message || err);
     return [];
   }
 }
@@ -413,7 +418,7 @@ JSON: {"relevante": [{"trend": "...", "score": 85}, ...]}`;
   }
 }
 
-/* === ✍️ Generare SEO Content pentru Produs (FIX: robust parse) === */
+/* === ✍️ Generare SEO Content pentru Produs === */
 async function generateSEOContent(title, body) {
   const prompt = `Creează meta title (max 60 caractere) și meta descriere (max 160 caractere) profesionale, optimizate SEO pentru produsul: "${title}". Include keywords relevante din nișa ambalaje eco. Returnează JSON strict: {"meta_title": "...", "meta_description": "..."}`;
   try {
@@ -424,7 +429,7 @@ async function generateSEOContent(title, body) {
     });
     const content = r.choices[0].message.content.replace(/```json|```/g, "").trim();
     console.log(`🔍 SEO GPT raw: ${content.substring(0, 100)}...`);
-    const raw = content.match(/\{.*\}/)?.[0] || content; // Extrage JSON dacă messy
+    const raw = content.match(/\{.*\}/)?.[0] || content;
     const parsed = JSON.parse(raw);
     console.log(`✅ SEO content gen: ${parsed.meta_title?.substring(0, 30) || 'parse fail'}...`);
     return parsed;
@@ -434,7 +439,7 @@ async function generateSEOContent(title, body) {
   }
 }
 
-/* === 📰 Articol SEO din trend (FIX: robust parse) === */
+/* === 📰 Articol SEO din trend === */
 async function generateBlogArticle(trend) {
   const prompt = `
 Creează articol SEO detaliat despre "${trend}" pentru Sofipex.ro (ambalaje eco: ${KEYWORDS.join(", ")}).
@@ -475,7 +480,7 @@ JSON EXACT: {"title": "...", "meta_title": "...", "meta_description": "...", "ta
   }
 }
 
-/* === 🧮 Scoruri SEO (FIX: log în fetchGSC) === */
+/* === 🧮 Scoruri SEO === */
 function calculateSEOScore({ clicks, impressions, ctr }) {
   const ctrScore = Number(ctr) / 5;
   const impressionScore = Math.log10(impressions + 1) * 10;
@@ -510,7 +515,7 @@ async function matchKeywordToProduct(keyword, products, keywordScore) {
   }
 }
 
-/* === 📊 Dashboard HTML === */
+/* === 📊 Dashboard HTML (FIX: GA chart sessions) === */
 function dashboardHTML() {
   const trendsList = lastRunData.trends.map(t => `<li>${t.trend} – scor ${t.score}</li>`).join("") || "<li>Niciun trend recent</li>";
   const scoresTable = lastRunData.scores.length > 0 ? 
@@ -518,7 +523,7 @@ function dashboardHTML() {
     "<p>Niciun scor recent</p>";
   const gaTable = lastRunData.gaData.length > 0 ? 
     `<table border="1"><tr><th>Page</th><th>Users</th><th>Sessions</th></tr>${lastRunData.gaData.slice(0,5).map(g => `<tr><td>${g.pagePath}</td><td>${g.activeUsers}</td><td>${g.sessions}</td></tr>`).join('')}</table>` : 
-    "<p>No GA data</p>";
+    "<p>No GA data (check env: GOOGLE_ANALYTICS_PROPERTY_ID)</p>";
   
   return `
   <html><head>
@@ -539,9 +544,13 @@ function dashboardHTML() {
     new Chart(ctx, {
       type: 'bar',
       data: {
-        labels: [${lastRunData.scores.map(s => `'${s.keyword.slice(0,10)}'`).join(',')}],
-        datasets: [{ label: 'Scor SEO', data: [${lastRunData.scores.map(s => s.score).join(',')}], backgroundColor: 'rgba(75,192,192,0.2)' }]
-      }
+        labels: [${lastRunData.scores.map(s => `'${s.keyword.slice(0,10)}'`).join(',') || 'No data'}],
+        datasets: [
+          { label: 'Scor SEO', data: [${lastRunData.scores.map(s => s.score).join(',') || '0'}], backgroundColor: 'rgba(75,192,192,0.2)' },
+          ${lastRunData.gaData.length > 0 ? `{ label: 'Sessions GA', data: [${lastRunData.gaData.slice(0, lastRunData.scores.length).map(g => g.sessions).join(',') || '0'}], backgroundColor: 'rgba(255,99,132,0.2)' }` : ''}
+        ]
+      },
+      options: { scales: { y: { beginAtZero: true } } }
     });
   </script>
   <form id="approve" method="POST" action="/approve">
@@ -577,7 +586,7 @@ async function sendReportEmail(trend, articleHandle, optimizedProductName, produ
   }
 }
 
-/* === 🚀 Run (FIX: scores filter >=10, log) === */
+/* === 🚀 Run === */
 async function runSEOAutomation() {
   console.log("🚀 Started...");
   await ensureHeaders("Scoruri", ["Data", "Keyword", "Score"]);
@@ -585,9 +594,9 @@ async function runSEOAutomation() {
   await ensureHeaders("Rapoarte", ["Data", "Trend", "Articol Handle", "Produs Optimizat", "Nr Produse", "Nr Scoruri"]);
   await ensureHeaders("Analytics", ["Data", "Page Path", "Active Users", "Sessions"]);
 
-  const gsc = await fetchGSCData(); // Acum cu scor calculat în rows
-  const gaData = await fetchGIData();
-  const gscKeywords = gsc; // Deja cu score
+  const gsc = await fetchGSCData();
+  const gaData = await fetchGIData(); // FIX: Await + log
+  const gscKeywords = gsc;
   const products = await getProducts();
   console.log(`🔍 Scores from GSC: ${gsc.length} | GA pages: ${gaData.length} | Eligible products: ${products.length}`);
   const trends = await fetchGoogleTrends();
@@ -601,9 +610,9 @@ async function runSEOAutomation() {
   const article = await generateBlogArticle(trend);
   const articleHandle = await createShopifyArticle(article);
 
-  // Pas 2: Scoruri & Save (FIX: filter >=10)
+  // Pas 2: Scoruri & Save
   console.log(`🔍 Toate scoruri: ${gscKeywords.slice(0,3).map(s => `${s.keyword}:${s.score}`).join(', ')}`);
-  const scores = gscKeywords.filter(s => Number(s.score) >= 10); // FIX: >=10 pentru mai multe
+  const scores = gscKeywords.filter(s => Number(s.score) >= 10);
   console.log(`🔍 Filtered scores (>=10): ${scores.length}`);
   const dateStr = new Date().toLocaleString("ro-RO");
   scores.forEach(s => saveToSheets("Scoruri", [dateStr, s.keyword, s.score]));
