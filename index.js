@@ -1,23 +1,3 @@
-/* =====================================================
-   🤖 Otto SEO AI v7 — Sofipex Smart SEO (Render Ready) — Versiune Fixată v9
-   -----------------------------------------------------
-   ✅ Integrare Google Trends real-time (România)
-   ✅ GPT filtrare trenduri relevante + AI score
-   ✅ GSC 28 zile + scor SEO per produs
-   ✅ Shopify SEO auto-update
-   ✅ Dashboard public cu reoptimizare manuală (FIX: GA table + chart sessions)
-   ✅ Google Sheets tab separat (Scoruri + Trenduri + Rapoarte + Analytics)
-   ✅ SendGrid raport complet
-   ✅ Google Analytics 4 Data API v1 (FIX: log property/scopes/error full, fallback robust)
-   ===================================================== 
-   FIX-uri noi pentru GA & erori:
-   - GA: Log "Property: [ID]", scopes, full err; dacă config lipsă, warn + return [] (nu crash).
-   - Dashboard: GA table + nou chart bar pentru sessions (dacă gaData >0, multi-dataset cu SEO scores).
-   - Sheets: batchUpdate safe (per-tab try-catch); dacă fail, append headers.
-   - Run: Await GA; dacă 0 data, log "GA skipped - config missing".
-   - General: Filter scores >=10; fallback în toate GPT calls.
-   */
-
 import express from "express";
 import { google } from "googleapis";
 import fetch from "node-fetch";
@@ -71,6 +51,32 @@ async function ensureHeaders(tab, headers) {
   try {
     const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
     const sheets = google.sheets({ version: "v4", auth });
+    
+    // Check if the sheet exists
+    const spreadsheet = await sheets.spreadsheets.get({
+      spreadsheetId: GOOGLE_SHEETS_ID,
+    });
+    const sheetExists = spreadsheet.data.sheets.some(sheet => sheet.properties.title === tab);
+
+    if (!sheetExists) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: GOOGLE_SHEETS_ID,
+        resource: {
+          requests: [
+            {
+              addSheet: {
+                properties: {
+                  title: tab,
+                  gridProperties: { rowCount: 100, columnCount: headers.length },
+                },
+              },
+            },
+          ],
+        },
+      });
+      console.log(`✅ Created new sheet: ${tab}`);
+    }
+
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEETS_ID,
       range: `${tab}!A1`,
@@ -84,7 +90,7 @@ async function ensureHeaders(tab, headers) {
             {
               insertDimension: {
                 range: {
-                  sheetId: 0,
+                  sheetId: spreadsheet.data.sheets.find(sheet => sheet.properties.title === tab).properties.sheetId,
                   dimension: "ROWS",
                   startIndex: 0,
                   endIndex: 1,
@@ -95,7 +101,7 @@ async function ensureHeaders(tab, headers) {
             {
               updateCells: {
                 range: {
-                  sheetId: 0,
+                  sheetId: spreadsheet.data.sheets.find(sheet => sheet.properties.title === tab).properties.sheetId,
                   startRowIndex: 0,
                   endRowIndex: 1,
                   startColumnIndex: 0,
@@ -339,7 +345,7 @@ async function fetchGIData() {
     console.log(`🔍 GA query: ${startDate} to ${endDate}`);
     const [response] = await analyticsdata.reports.run({
       auth,
-      property: GOOGLE_ANALYTICS_PROPERTY_ID,
+      property: `properties/${GOOGLE_ANALYTICS_PROPERTY_ID}`, // Ensure property format
       requestBody: {
         dateRanges: [{ startDate, endDate }],
         dimensions: [{ name: "pagePath" }],
@@ -358,7 +364,10 @@ async function fetchGIData() {
     console.log(`✅ GA: ${rows.length} pagini (ex: ${rows[0]?.pagePath || 'none'}, users: ${rows[0]?.activeUsers || 0}, sessions: ${rows[0]?.sessions || 0})`);
     return rows;
   } catch (err) {
-    console.error("❌ GA error full:", err.response?.data || err.message || err);
+    console.error("❌ GA error full:", err.response?.data?.error?.message || err.message || err);
+    if (err.code === 403 || err.code === 401) {
+      console.warn("⚠️ GA authentication issue - check GOOGLE_KEY_PATH and scopes");
+    }
     return [];
   }
 }
