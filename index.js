@@ -28,7 +28,8 @@ const {
   DASHBOARD_SECRET_KEY = "sofipex-secret",
   APP_URL = process.env.APP_URL || "https://sofipex-seo-ai-bot.onrender.com",
   KEEPALIVE_MINUTES = Number(process.env.KEEPALIVE_MINUTES || 5),
-  APPLY_PASSWORD = process.env.APPLY_PASSWORD || ""
+  APPLY_PASSWORD = process.env.APPLY_PASSWORD || "",
+  COOL_DOWN_DAYS = Number(process.env.COOL_DOWN_DAYS || 30)
 } = process.env;
 
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
@@ -249,7 +250,7 @@ async function getProducts() {
     const products = allProducts.map(p => {
       const lastOpt = p.metafields?.find(m => m.namespace === "seo" && m.key === "last_optimized_date")?.value;
       const lastDate = lastOpt ? new Date(lastOpt) : null;
-      const eligible = !lastDate || (Date.now() - lastDate) > 30 * 24 * 60 * 60 * 1000;
+      const eligible = !lastDate || (Date.now() - lastDate) > COOL_DOWN_DAYS * 24 * 60 * 60 * 1000;
       return { ...p, last_optimized_date: lastDate, eligible_for_optimization: eligible, body_html: p.body_html || '' };
     });
     return products;
@@ -586,6 +587,14 @@ app.post("/approve-optimization", async (req, res) => {
         if (!proposedOptimization) return res.send("⚠️ Nici o optimizare On-Page propusă. Rulează /run-now mai întâi.");
         
         const proposalToApply = proposedOptimization;
+        // Always ensure proposed meta are present for all approvals
+        if (!proposalToApply.proposedMetaTitle || !proposalToApply.proposedMetaDescription) {
+          try {
+            const seo = await runWithRetry(() => generateSEOContent(proposalToApply.productTitle, proposalToApply.newDescription || proposalToApply.oldDescription || ""));
+            proposalToApply.proposedMetaTitle = seo.meta_title;
+            proposalToApply.proposedMetaDescription = seo.meta_description;
+          } catch {}
+        }
         const success = await applyProposedOptimization(proposalToApply);
         
         if (success) {
@@ -695,6 +704,17 @@ function dashboardHTML() {
     const scoresTable = lastRunData.scores.length > 0 ? `<table border="1"><tr><th>Keyword</th><th>Score</th></tr>${lastRunData.scores.map(s => `<tr><td>${s.keyword}</td><td>${s.score}</td></tr>`).join('')}</table>` : "<p>Niciun scor recent</p>";
     const gaTable = lastRunData.gaData.length > 0 ? `<table border="1"><tr><th>Page</th><th>Users</th><th>Sessions</th></tr>${lastRunData.gaData.slice(0,5).map(g => `<tr><td>${g.pagePath}</td><td>${g.activeUsers}</td><td>${g.sessions}</td></tr>`).join('')}</table>` : "<p>No GA data</p>";
     
+    const serpPreview = proposedOptimization ? `
+        <div style="margin-top:10px;border:1px solid #ddd;padding:10px;border-radius:6px;">
+          <h3>🔍 SERP Preview</h3>
+          <div style="font-family:Arial, sans-serif;">
+            <div style="color:#1a0dab; font-size:18px; line-height:1.2;">${sanitizeMetaField(proposedOptimization.proposedMetaTitle || proposedOptimization.productTitle, 60)}</div>
+            <div style="color:#006621; font-size:14px;">sofipex.ro/produse/${(proposedOptimization.productTitle || '').toLowerCase().replace(/[^a-z0-9]+/gi,'-')}</div>
+            <div style="color:#545454; font-size:13px;">${sanitizeMetaField(proposedOptimization.proposedMetaDescription || '', 160)}</div>
+          </div>
+        </div>
+    ` : '';
+
     const approvalSection = proposedOptimization ? `
         <hr>
         <h2>⚠️ Propunere On-Page (Aprobare Manuală)</h2>
@@ -720,6 +740,7 @@ function dashboardHTML() {
           <p><b>Meta Description (curentă):</b> ${proposedOptimization.currentMetaDescription || '—'}<br/>
              <b>Propusă (≤160):</b> ${proposedOptimization.proposedMetaDescription || '—'}</p>
         </div>
+        ${serpPreview}
     ` : '<h2>✅ Niciună modificare On-Page în așteptare de aprobare.</h2><form method="GET" action="/propose-next"><input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}"><button type="submit" style="padding:8px 14px;">🔄 Generează următoarea propunere</button></form>';
 
     return `
