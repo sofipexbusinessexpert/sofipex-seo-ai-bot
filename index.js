@@ -79,48 +79,23 @@ async function ensureHeaders(tab, headers) {
 
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId: GOOGLE_SHEETS_ID,
-      range: `${tab}!A1`,
+      range: `${tab}!A1:${String.fromCharCode(64 + headers.length)}1`, // Dynamic range based on header count
     });
     const firstRow = res.data.values?.[0] || [];
-    if (firstRow.join(',') !== headers.join(',')) {
-      await sheets.spreadsheets.batchUpdate({
+    if (firstRow.length === 0 || firstRow.join(',').trim() !== headers.join(',').trim()) {
+      await sheets.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEETS_ID,
-        resource: {
-          requests: [
-            {
-              insertDimension: {
-                range: {
-                  sheetId: spreadsheet.data.sheets.find(sheet => sheet.properties.title === tab).properties.sheetId,
-                  dimension: "ROWS",
-                  startIndex: 0,
-                  endIndex: 1,
-                },
-                inheritFromBefore: false,
-              },
-            },
-            {
-              updateCells: {
-                range: {
-                  sheetId: spreadsheet.data.sheets.find(sheet => sheet.properties.title === tab).properties.sheetId,
-                  startRowIndex: 0,
-                  endRowIndex: 1,
-                  startColumnIndex: 0,
-                  endColumnIndex: headers.length,
-                },
-                rows: [{ values: headers.map(h => ({ userEnteredValue: { stringValue: h } })) }],
-                fields: "userEnteredValue",
-              },
-            },
-          ],
-        },
+        range: `${tab}!A1:${String.fromCharCode(64 + headers.length)}1`,
+        valueInputOption: "RAW",
+        resource: { values: [headers] },
       });
-      console.log(`✅ Headers inserted via batchUpdate for ${tab}: ${headers.join(', ')} (istoric păstrat)`);
+      console.log(`✅ Headers updated for ${tab}: ${headers.join(', ')}`);
     } else {
-      console.log(`✅ Headers already exist for ${tab}`);
+      console.log(`✅ Headers already correct for ${tab}: ${headers.join(', ')}`);
     }
   } catch (err) {
     console.error(`❌ Headers setup error for ${tab}:`, err.message);
-    // Fallback: Append headers
+    // Fallback: Append headers if update fails
     await saveToSheets(tab, headers, true);
   }
 }
@@ -339,13 +314,26 @@ async function fetchGIData() {
       scopes: ["https://www.googleapis.com/auth/analytics.readonly"],
     });
     console.log(`🔍 GA auth scopes: analytics.readonly | Property: ${GOOGLE_ANALYTICS_PROPERTY_ID}`);
+
+    // Test authentication
+    const authClient = await auth.getClient();
+    if (!authClient) {
+      console.error("❌ GA authentication failed - invalid client");
+      return [];
+    }
+
     const analyticsdata = google.analyticsdata({ version: "v1beta", auth });
+    if (!analyticsdata || !analyticsdata.reports || !analyticsdata.reports.run) {
+      console.error("❌ GA API not available - ensure Data API is enabled in Google Cloud Console");
+      return [];
+    }
+
     const endDate = new Date().toISOString().split("T")[0];
     const startDate = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
     console.log(`🔍 GA query: ${startDate} to ${endDate}`);
     const [response] = await analyticsdata.reports.run({
-      auth,
-      property: `properties/${GOOGLE_ANALYTICS_PROPERTY_ID}`, // Ensure property format
+      auth: authClient,
+      property: `properties/${GOOGLE_ANALYTICS_PROPERTY_ID}`,
       requestBody: {
         dateRanges: [{ startDate, endDate }],
         dimensions: [{ name: "pagePath" }],
@@ -366,7 +354,9 @@ async function fetchGIData() {
   } catch (err) {
     console.error("❌ GA error full:", err.response?.data?.error?.message || err.message || err);
     if (err.code === 403 || err.code === 401) {
-      console.warn("⚠️ GA authentication issue - check GOOGLE_KEY_PATH and scopes");
+      console.warn("⚠️ GA authentication issue - check GOOGLE_KEY_PATH, scopes, and API enablement");
+    } else if (err.code === 404) {
+      console.warn("⚠️ GA property not found - verify GOOGLE_ANALYTICS_PROPERTY_ID");
     }
     return [];
   }
