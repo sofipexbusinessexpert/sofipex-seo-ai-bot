@@ -399,5 +399,19 @@ async function sendReportEmail(trend, articleHandle, optimizedProductName, produ
     } catch (e) {
         console.error("❌ Email error:", e.message);
     }
+
+   /* === Retry Wrapper for External APIs === */
+async function runWithRetry(fn, maxRetries = 3) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const result = await fn();
+            if (result) return result; // Dacă funcția returnează ceva, oprim
+        } catch (e) {
+            console.error(`❌ Tentativă ${attempt}/${maxRetries} eșuată:`, e.message.substring(0, 80));
+            if (attempt === maxRetries) throw e;
+            await new Promise(resolve => setTimeout(resolve, 3000 * attempt)); // Așteaptă 3, 6 secunde
+        }
+    }
 }
+
 
