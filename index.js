@@ -386,6 +386,15 @@ async function fetchGIData() {
     }
     return [];
   }
+  // Am inclus acest cod în versiunea finală, care este esențial:
+// Dacă acest log apare, înseamnă că permisiunile/configurarea nu permit API-ului să se încarce.
+
+if (err.code === 403) {
+  console.warn("⚠️ GA 403: Insufficient permissions. Verify service account has Viewer role in GA4 Property Access Management.");
+} else if (err.code === 401) {
+  console.warn("⚠️ GA 401: Authentication failed. Check GOOGLE_KEY_PATH and API credentials.");
+} 
+// ...
 }
 
 /* === 🌍 Google Trends === */
