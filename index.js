@@ -146,9 +146,28 @@ async function setStateValue(key, value) {
   }
 }
 
+async function getOptimizedProductIds() {
+  const raw = await getStateValue("optimized_product_ids");
+  if (!raw) return new Set();
+  try {
+    const arr = String(raw).split(',').map(s => s.trim()).filter(Boolean);
+    return new Set(arr);
+  } catch {
+    return new Set();
+  }
+}
+async function addOptimizedProductId(id) {
+  const set = await getOptimizedProductIds();
+  set.add(String(id));
+  await setStateValue("optimized_product_ids", Array.from(set).join(','));
+}
+
 async function chooseNextProduct(products) {
   if (!products || products.length === 0) throw new Error("No products available");
-  const productsSorted = [...products].sort((a, b) => Number(a.id) - Number(b.id));
+  const optimizedSet = await getOptimizedProductIds();
+  const candidates = products.filter(p => !optimizedSet.has(String(p.id)));
+  const pool = candidates.length > 0 ? candidates : products;
+  const productsSorted = [...pool].sort((a, b) => Number(a.id) - Number(b.id));
   const lastIdRaw = await getStateValue("last_onpage_product_id");
   const lastId = lastIdRaw ? String(lastIdRaw) : null;
   let nextIndex = 0;
@@ -321,7 +340,23 @@ async function fetchGIData() {
 
 /* === 🌍 Google Trends & GPT Utils === */
 async function fetchGoogleTrends() { /* ... (Logică neschimbată) ... */ return KEYWORDS; }
-async function filterTrendsWithAI(trends, recentTrends = [], gscKeywords = []) { /* ... (Logică neschimbată) ... */ return KEYWORDS.map(t => ({ trend: t, score: 80 })); }
+async function filterTrendsWithAI(trends, recentTrends = [], gscKeywords = []) {
+  try {
+    const recentSet = new Set((recentTrends || []).map(t => String(t).toLowerCase().trim()));
+    const rawPool = [...new Set([...(trends || []), ...KEYWORDS])];
+    const filtered = rawPool.filter(t => !recentSet.has(String(t).toLowerCase().trim()));
+    // Simple scoring: prefer items that share tokens with top GSC keywords
+    const topGsc = (gscKeywords || []).slice(0, 10).map(k => String(k.keyword || '').toLowerCase());
+    function scoreTrend(t) {
+      const tl = String(t).toLowerCase();
+      const tokenMatches = topGsc.reduce((acc, kw) => acc + (kw.includes(tl) || tl.includes(kw) ? 1 : 0), 0);
+      return 70 + Math.min(30, tokenMatches * 10);
+    }
+    return filtered.map(t => ({ trend: t, score: scoreTrend(t) }));
+  } catch {
+    return KEYWORDS.map(t => ({ trend: t, score: 80 }));
+  }
+}
 
 function extractKeywordsFromTitle(title) {
   const raw = String(title || '').toLowerCase();
@@ -443,9 +478,8 @@ async function runSEOAutomation() {
     const targetProduct = await chooseNextProduct(products);
     optimizedProductName = targetProduct.title;
 
-    // A. Aplică direct Meta-datele (SEO Off-Page) - Setează Cooldown-ul
-    const newSeo = await runWithRetry(() => generateSEOContent(targetProduct.title, targetProduct.body_html || ""));
-    await updateProduct(targetProduct.id, newSeo); 
+    // A. Generează meta propuse (NU aplica încă)
+    const proposedSeo = await runWithRetry(() => generateSEOContent(targetProduct.title, targetProduct.body_html || ""));
 
     // B. Generează și Stochează Propunerea Descriere (On-Page)
     const oldDescriptionClean = targetProduct.body_html || '';
@@ -457,16 +491,47 @@ async function runSEOAutomation() {
         console.error("🔴 ESEC FINAL: On-Page patch nu a putut fi generat.");
     }
 
+    // Extrage meta curente din metafields, cu fallback
+    const metaTitleCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '', 60);
+    const metaDescCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || oldDescriptionClean || targetProduct.title || '', 160);
+
     proposedOptimization = {
-        productId: targetProduct.id, productTitle: targetProduct.title, oldDescription: oldDescriptionClean, newDescription: newBodyHtml, keyword: targetKeyword.keyword, timestamp: dateStr
+        productId: targetProduct.id,
+        productTitle: targetProduct.title,
+        oldDescription: oldDescriptionClean,
+        newDescription: newBodyHtml,
+        keyword: targetKeyword.keyword,
+        timestamp: dateStr,
+        proposedMetaTitle: proposedSeo.meta_title,
+        proposedMetaDescription: proposedSeo.meta_description,
+        currentMetaTitle: metaTitleCurrent,
+        currentMetaDescription: metaDescCurrent
     };
     console.log(`🔄 Propunere On-Page generată și stocată pentru ${targetProduct.title}. Așteaptă aprobare.`);
 
   } else if (products.length > 0) {
     const targetProduct = await chooseNextProduct(products);
     optimizedProductName = targetProduct.title;
-    const newSeo = await runWithRetry(() => generateSEOContent(targetProduct.title, targetProduct.body_html || ""));
-    await updateProduct(targetProduct.id, newSeo);
+    // Doar propune meta când nu avem scoruri
+    const proposedSeo = await runWithRetry(() => generateSEOContent(targetProduct.title, targetProduct.body_html || ""));
+    const oldDescriptionClean = targetProduct.body_html || '';
+    const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
+    let newBodyHtml = oldDescriptionClean;
+    try { newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords)); } catch {}
+    const metaTitleCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '', 60);
+    const metaDescCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || oldDescriptionClean || targetProduct.title || '', 160);
+    proposedOptimization = {
+      productId: targetProduct.id,
+      productTitle: targetProduct.title,
+      oldDescription: oldDescriptionClean,
+      newDescription: newBodyHtml,
+      keyword: KEYWORDS[0],
+      timestamp: new Date().toLocaleString('ro-RO'),
+      proposedMetaTitle: proposedSeo.meta_title,
+      proposedMetaDescription: proposedSeo.meta_description,
+      currentMetaTitle: metaTitleCurrent,
+      currentMetaDescription: metaDescCurrent
+    };
   } else {
     console.log("⚠️ No eligible products, skip optimizare");
   }
@@ -488,9 +553,10 @@ async function applyProposedOptimization(proposal) {
     try {
         // Ensure meta fields are set/clamped during approval to prevent Shopify from inferring from body
         const safeTitle = sanitizeMetaField(proposal.productTitle || '', 60);
-        const safeDesc = sanitizeMetaField(proposal.newDescription || proposal.oldDescription || proposal.productTitle || '', 160);
-        const updates = { body_html: proposal.newDescription, meta_title: safeTitle, meta_description: safeDesc };
+        const safeDesc = sanitizeMetaField(proposal.proposedMetaDescription || proposal.newDescription || proposal.oldDescription || proposal.productTitle || '', 160);
+        const updates = { body_html: proposal.newDescription, meta_title: proposal.proposedMetaTitle || safeTitle, meta_description: safeDesc };
         await updateProduct(proposal.productId, updates); 
+        await addOptimizedProductId(proposal.productId);
         return true;
     } catch (err) {
         console.error(`❌ Aprobare update produs ${proposal.productId} eșuată:`, err.message);
@@ -594,6 +660,13 @@ function dashboardHTML() {
             <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
             <button type="submit" style="padding:10px 20px; background-color:#b91c1c; color:white; border:none; cursor:pointer; margin-top:10px;">❌ REFUZĂ (sari la alt produs)</button>
         </form>
+        <div style="margin-top:10px;">
+          <h3>🔎 Meta (Search Engine Listing)</h3>
+          <p><b>Meta Title (curent):</b> ${proposedOptimization.currentMetaTitle || '—'}<br/>
+             <b>Propus:</b> ${proposedOptimization.proposedMetaTitle || '—'}</p>
+          <p><b>Meta Description (curentă):</b> ${proposedOptimization.currentMetaDescription || '—'}<br/>
+             <b>Propusă (≤160):</b> ${proposedOptimization.proposedMetaDescription || '—'}</p>
+        </div>
     ` : '<h2>✅ Niciună modificare On-Page în așteptare de aprobare.</h2><form method="GET" action="/propose-next"><input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}"><button type="submit" style="padding:8px 14px;">🔄 Generează următoarea propunere</button></form>';
 
     return `
