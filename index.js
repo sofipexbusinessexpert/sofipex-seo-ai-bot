@@ -536,6 +536,17 @@ app.post("/reject-optimization", async (req, res) => {
     }
 });
 
+app.get("/propose-next", async (req, res) => {
+    try {
+        const key = req.query.key;
+        if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden");
+        await prepareNextOnPageProposal();
+        return res.redirect(303, "/dashboard");
+    } catch (e) {
+        res.status(500).send("Eroare: " + e.message);
+    }
+});
+
 app.get("/run-now", async (req, res) => {
     try {
         const key = req.query.key;
@@ -583,7 +594,7 @@ function dashboardHTML() {
             <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
             <button type="submit" style="padding:10px 20px; background-color:#b91c1c; color:white; border:none; cursor:pointer; margin-top:10px;">❌ REFUZĂ (sari la alt produs)</button>
         </form>
-    ` : '<h2>✅ Niciună modificare On-Page în așteptare de aprobare.</h2><form method="GET" action="/run-now"><input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}"><button type="submit" style="padding:8px 14px;">🔄 Generează următoarea propunere</button></form>';
+    ` : '<h2>✅ Niciună modificare On-Page în așteptare de aprobare.</h2><form method="GET" action="/propose-next"><input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}"><button type="submit" style="padding:8px 14px;">🔄 Generează următoarea propunere</button></form>';
 
     return `
     <html><head>
