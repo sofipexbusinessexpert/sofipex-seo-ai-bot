@@ -1,6 +1,6 @@
 /* =====================================================
-   🤖 Otto SEO AI v7.7 — Sofipex Smart SEO (Final Stable)
-   -----------------------------------------------------
+   🤖 TheMastreM SEO AI v7.7 — Sofipex Smart SEO (Final Stable)
+   ------------------------------------------------------------
    ✅ FIX CRITIC: Restabilirea funcționalității GSC (Autentificare robustă)
    ✅ Logică stabilă: On-Page, Cooldown, Retry GPT
    ===================================================== */
@@ -27,7 +27,8 @@ const {
   SENDGRID_API_KEY,
   DASHBOARD_SECRET_KEY = "sofipex-secret",
   APP_URL = process.env.APP_URL || "https://sofipex-seo-ai-bot.onrender.com",
-  KEEPALIVE_MINUTES = Number(process.env.KEEPALIVE_MINUTES || 5)
+  KEEPALIVE_MINUTES = Number(process.env.KEEPALIVE_MINUTES || 5),
+  APPLY_PASSWORD = process.env.APPLY_PASSWORD || ""
 } = process.env;
 
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
@@ -37,9 +38,10 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-let lastRunData = { trends: [], scores: [], gaData: [] };
+let lastRunData = { trends: [], scores: [], gaData: [], selectedTrend: null };
 let proposedOptimization = null;
 let localState = {};
+let pendingArticlePreview = null;
 
 const KEYWORDS = [
   "cutii pizza", "ambalaje biodegradabile", "pahare carton", "caserole eco", "tăvițe fast food",
@@ -194,6 +196,7 @@ async function prepareNextOnPageProposal() {
 
     const targetProduct = await chooseNextProduct(products);
     const oldDescriptionClean = targetProduct.body_html || '';
+    const proposedSeo = await runWithRetry(() => generateSEOContent(targetProduct.title, oldDescriptionClean || ""));
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
     try {
@@ -203,13 +206,20 @@ async function prepareNextOnPageProposal() {
     }
 
     const dateStr = new Date().toLocaleString("ro-RO");
+    const metaTitleCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '', 60);
+    const metaDescCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || oldDescriptionClean || targetProduct.title || '', 160);
+
     proposedOptimization = {
       productId: targetProduct.id,
       productTitle: targetProduct.title,
       oldDescription: oldDescriptionClean,
       newDescription: newBodyHtml,
       keyword: targetKeyword.keyword,
-      timestamp: dateStr
+      timestamp: dateStr,
+      proposedMetaTitle: proposedSeo.meta_title,
+      proposedMetaDescription: proposedSeo.meta_description,
+      currentMetaTitle: metaTitleCurrent,
+      currentMetaDescription: metaDescCurrent
     };
     console.log(`🔄 Următoarea propunere On-Page pregătită pentru ${targetProduct.title}.`);
   } catch (e) {
@@ -417,7 +427,7 @@ async function generateBlogArticle(trend) {
   try {
     const r = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.7, max_tokens: 2000, });
     const content = r.choices[0].message.content.replace(/```json|```/g, "").trim();
-    const article = JSON.parse(content);
+  const article = JSON.parse(content);
     if (!article.content_html || article.content_html.length < 100) { throw new Error("GPT returned content too short or missing HTML."); }
     return article;
   } catch (e) { 
@@ -564,13 +574,14 @@ async function applyProposedOptimization(proposal) {
     }
 }
 
-app.get("/", (req, res) => res.send("✅ v7.7 rulează!"));
+app.get("/", (req, res) => res.send("✅ TheMastreM SEO AI v7.7 rulează!"));
 app.get("/dashboard", (req, res) => res.send(dashboardHTML()));
 
 app.post("/approve-optimization", async (req, res) => {
     try {
-        const key = req.body.key;
+        const { key, password } = req.body;
         if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
+        if (APPLY_PASSWORD && password !== APPLY_PASSWORD) return res.status(403).send("Forbidden: Invalid Apply Password");
         
         if (!proposedOptimization) return res.send("⚠️ Nici o optimizare On-Page propusă. Rulează /run-now mai întâi.");
         
@@ -602,6 +613,43 @@ app.post("/reject-optimization", async (req, res) => {
     }
 });
 
+app.post("/regenerate-optimization", async (req, res) => {
+    try {
+        const key = req.body.key;
+        if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
+        if (!proposedOptimization) return res.redirect(303, "/propose-next?key=" + encodeURIComponent(DASHBOARD_SECRET_KEY));
+
+        // Recompute proposal for the same product, new content and meta
+        const products = await getProducts();
+        const current = products.find(p => String(p.id) === String(proposedOptimization.productId));
+        if (!current) { proposedOptimization = null; return res.redirect(303, "/dashboard"); }
+
+        const proposedSeo = await runWithRetry(() => generateSEOContent(current.title, current.body_html || ""));
+        const titleKeywords = extractKeywordsFromTitle(current.title);
+        const oldDescriptionClean = current.body_html || '';
+        let newBodyHtml = oldDescriptionClean;
+        try { newBodyHtml = await runWithRetry(() => generateProductPatch(current.title, oldDescriptionClean, titleKeywords)); } catch {}
+
+        const metaTitleCurrent = sanitizeMetaField(current.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || current.title || '', 60);
+        const metaDescCurrent = sanitizeMetaField(current.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || oldDescriptionClean || current.title || '', 160);
+
+        proposedOptimization = {
+          productId: current.id,
+          productTitle: current.title,
+          oldDescription: oldDescriptionClean,
+          newDescription: newBodyHtml,
+          keyword: proposedOptimization.keyword,
+          timestamp: new Date().toLocaleString('ro-RO'),
+          proposedMetaTitle: proposedSeo.meta_title,
+          proposedMetaDescription: proposedSeo.meta_description,
+          currentMetaTitle: metaTitleCurrent,
+          currentMetaDescription: metaDescCurrent
+        };
+        return res.redirect(303, "/dashboard");
+    } catch (e) {
+        res.status(500).send("Eroare: " + e.message);
+    }
+});
 app.get("/propose-next", async (req, res) => {
     try {
         const key = req.query.key;
@@ -631,7 +679,7 @@ app.post("/approve", async (req, res) => {
 });
 
 app.listen(process.env.PORT || 3000, () => {
-  console.log("🌐 Server activ pe portul 3000 (Otto SEO AI v7.7)");
+  console.log("🌐 Server activ pe portul 3000 (TheMastreM SEO AI v7.7)");
   if (APP_URL && KEEPALIVE_MINUTES > 0) {
     setInterval(() => {
       fetch(APP_URL)
@@ -654,11 +702,16 @@ function dashboardHTML() {
         <textarea style="width:100%; height:150px; font-family:monospace; font-size:12px;" readonly>-- DESCRIERE VECHE (fragment) --\n${proposedOptimization.oldDescription?.substring(0, 500) || 'N/A'}\n\n-- DESCRIERE NOUĂ PROPUSĂ (fragment) --\n${proposedOptimization.newDescription?.substring(0, 500) || 'Eroare generare'}</textarea>
         <form method="POST" action="/approve-optimization" style="display:inline-block; margin-right:10px;">
             <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
+            <input type="password" name="password" placeholder="Parolă aplicare" style="padding:6px; margin-right:8px;" ${APPLY_PASSWORD ? '' : 'disabled placeholder="(fără parolă)"'}>
             <button type="submit" style="padding:10px 20px; background-color:#4CAF50; color:white; border:none; cursor:pointer; margin-top:10px;">✅ APROBĂ ȘI APLICĂ MODIFICAREA</button>
         </form>
         <form method="POST" action="/reject-optimization" style="display:inline-block;">
             <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
             <button type="submit" style="padding:10px 20px; background-color:#b91c1c; color:white; border:none; cursor:pointer; margin-top:10px;">❌ REFUZĂ (sari la alt produs)</button>
+        </form>
+        <form method="POST" action="/regenerate-optimization" style="display:inline-block; margin-left:10px;">
+            <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
+            <button type="submit" style="padding:10px 20px; background-color:#0ea5e9; color:white; border:none; cursor:pointer; margin-top:10px;">🔄 REGENEREAZĂ PROPUNERE</button>
         </form>
         <div style="margin-top:10px;">
           <h3>🔎 Meta (Search Engine Listing)</h3>
@@ -671,11 +724,11 @@ function dashboardHTML() {
 
     return `
     <html><head>
-    <title>Otto SEO AI Dashboard</title>
+    <title>TheMastreM SEO AI Dashboard</title>
     <meta charset="utf-8">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     </head><body style="font-family:Arial;padding:30px;">
-    <h1>📊 Otto SEO AI v7.7 Dashboard</h1>
+    <h1>📊 TheMastreM SEO AI v7.7 Dashboard</h1>
     ${approvalSection}
     <hr>
     <h2>Trenduri & Analiză</h2>
@@ -698,7 +751,7 @@ async function sendReportEmail(trend, articleHandle, optimizedProductName, produ
         : `<p style="color:green;">✅ Nicio optimizare On-Page în așteptare.</p>`;
 
     const html = `
-        <h1>📅 Raport Otto SEO AI v7.7</h1>
+        <h1>📅 Raport TheMastreM SEO AI v7.7</h1>
         <p>Timp Uman Economisit Rulare Curentă: <b>${timeSavings} ore</b></p>
         <p>Trend: <b>${trend}</b></p>
         <p>Draft Articol: ${articleHandle ? `<a href="https://${SHOP_NAME}.myshopify.com/admin/articles/${articleHandle}">Editează Draft</a>` : 'Eroare'}</p>
@@ -711,7 +764,7 @@ async function sendReportEmail(trend, articleHandle, optimizedProductName, produ
     `;
     try {
         if (!SENDGRID_API_KEY || !EMAIL_TO || !EMAIL_FROM) return;
-        await sgMail.send({ to: EMAIL_TO, from: EMAIL_FROM, subject: `📈 Raport SEO v7.7 (${timeSavings} ore salvate)`, html });
+        await sgMail.send({ to: EMAIL_TO, from: EMAIL_FROM, subject: `📈 Raport TheMastreM SEO AI v7.7 (${timeSavings} ore salvate)`, html });
     } catch (e) {
         console.error("❌ Email error:", e.message);
     }
