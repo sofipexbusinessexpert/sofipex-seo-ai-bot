@@ -298,7 +298,7 @@ async function fetchGSCData() {
   }
 }
 
-/* === 📊 Google Analytics 4 Data API v1 (FIX: log full error) === */
+/* === 📊 Google Analytics 4 Data API v1 (Enhanced with retries) === */
 async function fetchGIData() {
   try {
     if (!GOOGLE_KEY_PATH) {
@@ -309,20 +309,21 @@ async function fetchGIData() {
       console.warn("⚠️ GA skipped - GOOGLE_ANALYTICS_PROPERTY_ID missing (add to .env: properties/XXXXXX)");
       return [];
     }
+
     const auth = new google.auth.GoogleAuth({
       keyFile: GOOGLE_KEY_PATH,
       scopes: ["https://www.googleapis.com/auth/analytics.readonly"],
     });
-    console.log(`🔍 GA auth scopes: analytics.readonly | Property: ${GOOGLE_ANALYTICS_PROPERTY_ID}`);
+    console.log(`🔍 GA auth initialized | Property: ${GOOGLE_ANALYTICS_PROPERTY_ID}`);
 
     // Test authentication
     const authClient = await auth.getClient();
     if (!authClient) {
-      console.error("❌ GA authentication failed - invalid client");
+      console.error("❌ GA authentication failed - invalid client or credentials");
       return [];
     }
 
-    const analyticsdata = google.analyticsdata({ version: "v1beta", auth });
+    const analyticsdata = google.analyticsdata({ version: "v1beta", auth: authClient });
     if (!analyticsdata || !analyticsdata.reports || !analyticsdata.reports.run) {
       console.error("❌ GA API not available - ensure Data API is enabled in Google Cloud Console");
       return [];
@@ -331,32 +332,64 @@ async function fetchGIData() {
     const endDate = new Date().toISOString().split("T")[0];
     const startDate = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
     console.log(`🔍 GA query: ${startDate} to ${endDate}`);
-    const [response] = await analyticsdata.reports.run({
-      auth: authClient,
-      property: `properties/${GOOGLE_ANALYTICS_PROPERTY_ID}`,
-      requestBody: {
-        dateRanges: [{ startDate, endDate }],
-        dimensions: [{ name: "pagePath" }],
-        metrics: [
-          { name: "activeUsers" },
-          { name: "sessions" }
-        ],
-        limit: 25,
-      },
-    });
-    const rows = response.rows?.map((row) => ({
-      pagePath: row.dimensionValues[0].value,
-      activeUsers: parseInt(row.metricValues[0].value) || 0,
-      sessions: parseInt(row.metricValues[1].value) || 0,
-    })) || [];
-    console.log(`✅ GA: ${rows.length} pagini (ex: ${rows[0]?.pagePath || 'none'}, users: ${rows[0]?.activeUsers || 0}, sessions: ${rows[0]?.sessions || 0})`);
-    return rows;
+
+    // Attempt to run the report with retries
+    const maxRetries = 3;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const [response] = await analyticsdata.reports.run({
+          auth: authClient,
+          property: `properties/${GOOGLE_ANALYTICS_PROPERTY_ID}`,
+          requestBody: {
+            dateRanges: [{ startDate, endDate }],
+            dimensions: [{ name: "pagePath" }],
+            metrics: [
+              { name: "activeUsers" },
+              { name: "sessions" }
+            ],
+            limit: 25,
+          },
+        });
+
+        const rows = response.rows?.map((row) => ({
+          pagePath: row.dimensionValues[0].value,
+          activeUsers: parseInt(row.metricValues[0].value) || 0,
+          sessions: parseInt(row.metricValues[1].value) || 0,
+        })) || [];
+        
+        console.log(`✅ GA Success (Attempt ${attempt}/${maxRetries}): ${rows.length} pages (ex: ${rows[0]?.pagePath || 'none'}, users: ${rows[0]?.activeUsers || 0}, sessions: ${rows[0]?.sessions || 0})`);
+        return rows;
+
+      } catch (err) {
+        console.error(`❌ GA Attempt ${attempt}/${maxRetries} failed:`, {
+          message: err.message,
+          code: err.code,
+          status: err.status,
+          details: err.response?.data?.error?.message || 'No details',
+        });
+
+        if (attempt === maxRetries) throw err; // Re-throw on last attempt
+        console.log(`⏳ Retrying GA in 5 seconds... (Attempt ${attempt + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds before retry
+      }
+    }
+
   } catch (err) {
-    console.error("❌ GA error full:", err.response?.data?.error?.message || err.message || err);
-    if (err.code === 403 || err.code === 401) {
-      console.warn("⚠️ GA authentication issue - check GOOGLE_KEY_PATH, scopes, and API enablement");
+    console.error("❌ GA Final Error:", {
+      message: err.message,
+      code: err.code,
+      status: err.status,
+      details: err.response?.data?.error?.message || 'No additional details',
+    });
+
+    if (err.code === 403) {
+      console.warn("⚠️ GA 403: Insufficient permissions. Verify service account has Viewer role in GA4 Property Access Management.");
+    } else if (err.code === 401) {
+      console.warn("⚠️ GA 401: Authentication failed. Check GOOGLE_KEY_PATH and API credentials.");
     } else if (err.code === 404) {
-      console.warn("⚠️ GA property not found - verify GOOGLE_ANALYTICS_PROPERTY_ID");
+      console.warn("⚠️ GA 404: Property not found. Verify GOOGLE_ANALYTICS_PROPERTY_ID format (e.g., 123456789).");
+    } else if (!analyticsdata || !analyticsdata.reports || !analyticsdata.reports.run) {
+      console.warn("⚠️ GA API still not available. Confirm 'Google Analytics Data API' is fully enabled in Google Cloud Console.");
     }
     return [];
   }
