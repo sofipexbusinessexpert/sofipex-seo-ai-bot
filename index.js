@@ -8,6 +8,7 @@
 import express from "express";
 import fs from "fs/promises";
 import { google } from "googleapis";
+import crypto from "crypto";
 import fetch from "node-fetch";
 import OpenAI from "openai";
 import cron from "node-cron";
@@ -60,6 +61,49 @@ async function saveLocalStateToFile() {
   try {
     await fs.writeFile(STATE_FILE_PATH, JSON.stringify(localState, null, 2), 'utf8');
   } catch {}
+}
+
+// === CSRF & Password utils ===
+function generateToken(bytes = 32) {
+  return crypto.randomBytes(bytes).toString('hex');
+}
+async function getCsrfToken() {
+  let t = await getStateValue('csrf_token');
+  if (!t) {
+    t = generateToken(24);
+    await setStateValue('csrf_token', t);
+  }
+  return t;
+}
+async function verifyCsrf(token) {
+  const expected = await getStateValue('csrf_token');
+  if (!expected) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(String(token || '')), Buffer.from(String(expected)));
+  } catch {
+    return false;
+  }
+}
+async function verifyApplyPassword(inputPassword) {
+  const hash = process.env.APPLY_PASSWORD_HASH;
+  const salt = process.env.APPLY_PASSWORD_SALT || '';
+  if (hash) {
+    try {
+      const derived = crypto.scryptSync(String(inputPassword || ''), salt, 32).toString('hex');
+      return crypto.timingSafeEqual(Buffer.from(derived), Buffer.from(hash));
+    } catch { return false; }
+  }
+  if (APPLY_PASSWORD) {
+    try { return crypto.timingSafeEqual(Buffer.from(String(inputPassword || '')), Buffer.from(String(APPLY_PASSWORD))); } catch { return false; }
+  }
+  return true; // no password set
+}
+
+function pickVariantMeta(proposal, variant = 'A') {
+  const v = (variant || 'A').toUpperCase() === 'B' ? 'B' : 'A';
+  const title = v === 'B' ? proposal.proposedMetaTitleB || proposal.proposedMetaTitle : proposal.proposedMetaTitleA || proposal.proposedMetaTitle;
+  const desc = v === 'B' ? proposal.proposedMetaDescriptionB || proposal.proposedMetaDescription : proposal.proposedMetaDescriptionA || proposal.proposedMetaDescription;
+  return { meta_title: sanitizeMetaField(title || proposal.productTitle, 60), meta_description: sanitizeMetaField(desc || proposal.productTitle, 160) };
 }
 
 const KEYWORDS = [
@@ -534,6 +578,19 @@ async function runSEOAutomation() {
 
     // A. Generează meta propuse (NU aplica încă)
     const proposedSeo = await runWithRetry(() => generateSEOContent(targetProduct.title, targetProduct.body_html || ""));
+    const proposedSeoB = { ...proposedSeo };
+    try {
+      const alt = await runWithRetry(() => generateSEOContent(`${targetProduct.title} – Variant`, targetProduct.body_html || ""));
+      proposedSeoB.meta_title = alt.meta_title;
+      proposedSeoB.meta_description = alt.meta_description;
+    } catch {}
+    // Prepare simple A/B by creating a synonymic variant (fallback if GPT fails)
+    const proposedSeoB = { ...proposedSeo };
+    try {
+      const alt = await runWithRetry(() => generateSEOContent(`${targetProduct.title} – Variant`, targetProduct.body_html || ""));
+      proposedSeoB.meta_title = alt.meta_title;
+      proposedSeoB.meta_description = alt.meta_description;
+    } catch {}
 
     // B. Generează și Stochează Propunerea Descriere (On-Page)
     const oldDescriptionClean = targetProduct.body_html || '';
@@ -558,6 +615,10 @@ async function runSEOAutomation() {
         timestamp: dateStr,
         proposedMetaTitle: proposedSeo.meta_title,
         proposedMetaDescription: proposedSeo.meta_description,
+        proposedMetaTitleA: proposedSeo.meta_title,
+        proposedMetaDescriptionA: proposedSeo.meta_description,
+        proposedMetaTitleB: proposedSeoB.meta_title,
+        proposedMetaDescriptionB: proposedSeoB.meta_description,
         currentMetaTitle: metaTitleCurrent,
         currentMetaDescription: metaDescCurrent
     };
@@ -583,6 +644,10 @@ async function runSEOAutomation() {
       timestamp: new Date().toLocaleString('ro-RO'),
       proposedMetaTitle: proposedSeo.meta_title,
       proposedMetaDescription: proposedSeo.meta_description,
+      proposedMetaTitleA: proposedSeo.meta_title,
+      proposedMetaDescriptionA: proposedSeo.meta_description,
+      proposedMetaTitleB: proposedSeoB.meta_title,
+      proposedMetaDescriptionB: proposedSeoB.meta_description,
       currentMetaTitle: metaTitleCurrent,
       currentMetaDescription: metaDescCurrent
     };
