@@ -6,6 +6,7 @@
    ===================================================== */
 
 import express from "express";
+import fs from "fs/promises";
 import { google } from "googleapis";
 import fetch from "node-fetch";
 import OpenAI from "openai";
@@ -43,6 +44,23 @@ let lastRunData = { trends: [], scores: [], gaData: [], selectedTrend: null };
 let proposedOptimization = null;
 let localState = {};
 let pendingArticlePreview = null;
+const STATE_FILE_PATH = process.env.STATE_FILE_PATH || './state.json';
+let localStateLoaded = false;
+
+async function loadLocalStateFromFile() {
+  if (localStateLoaded) return;
+  try {
+    const data = await fs.readFile(STATE_FILE_PATH, 'utf8');
+    const json = JSON.parse(data);
+    if (json && typeof json === 'object') { localState = { ...localState, ...json }; }
+  } catch {}
+  localStateLoaded = true;
+}
+async function saveLocalStateToFile() {
+  try {
+    await fs.writeFile(STATE_FILE_PATH, JSON.stringify(localState, null, 2), 'utf8');
+  } catch {}
+}
 
 const KEYWORDS = [
   "cutii pizza", "ambalaje biodegradabile", "pahare carton", "caserole eco", "tăvițe fast food",
@@ -115,6 +133,7 @@ function sanitizeMetaField(text, maxLen) {
 // === App State (persisted in Google Sheets 'State' tab, with in-memory fallback) ===
 async function getStateValue(key) {
   try {
+    await loadLocalStateFromFile();
     if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) return localState[key];
     const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
     const sheets = google.sheets({ version: "v4", auth });
@@ -130,7 +149,8 @@ async function getStateValue(key) {
 }
 async function setStateValue(key, value) {
   try {
-    if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) { localState[key] = String(value); return; }
+    await loadLocalStateFromFile();
+    if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) { localState[key] = String(value); await saveLocalStateToFile(); return; }
     const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
     const sheets = google.sheets({ version: "v4", auth });
     const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEETS_ID, range: "State!A:B" });
@@ -146,6 +166,7 @@ async function setStateValue(key, value) {
     }
   } catch (e) {
     localState[key] = String(value);
+    await saveLocalStateToFile();
   }
 }
 
