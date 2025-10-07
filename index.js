@@ -179,12 +179,22 @@ async function updateProduct(id, updates) {
   }
 }
 
-/* === 📝 Publicare Articol pe Shopify === */
+/* === 📝 Publicare Articol pe Shopify (Versiune Debug) === */
 async function createShopifyArticle(article) {
   try {
-    if (!article || !article.content_html || article.content_html.trim().length < 500) {
-      article = { title: "Articol Fallback", meta_title: "Fallback", meta_description: "Soluții sustenabile de ambalaje.", tags: ["eco", "sustenabil"], content_html: "<h1>Ambalaje Eco la Sofipex</h1><p>Conținut fallback...</p>" };
+    if (!BLOG_ID) {
+      console.error("❌ Eroare Config: Variabila BLOG_ID lipsește!");
+      return null;
     }
+
+    if (!article || !article.content_html || article.content_html.trim().length < 500) {
+      console.warn("⚠️ Conținut insuficient sau lipsă, folosind fallback.");
+      article = {
+        title: "Articol Fallback", meta_title: "Fallback", meta_description: "Soluții sustenabile de ambalaje.", tags: ["eco", "sustenabil"], content_html: "<h1>Ambalaje Eco la Sofipex</h1><p>Conținut fallback...</p>"
+      };
+    }
+    
+    // Obiectul de date pe care îl trimitem
     const articleData = {
       article: {
         title: article.title || article.meta_title, author: "Sofipex", tags: article.tags, blog_id: BLOG_ID, body_html: article.content_html, 
@@ -194,9 +204,24 @@ async function createShopifyArticle(article) {
         ], published: false,
       },
     };
-    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/blogs/${BLOG_ID}/articles.json`, { method: "POST", headers: { "X-Shopify-Access-Token": SHOPIFY_API }, body: JSON.stringify(articleData), });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    console.log(`🔍 Tentativă publicare pe Blog ID: ${BLOG_ID}. Titlu: ${articleData.article.title.substring(0, 50)}...`);
+
+    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/blogs/${BLOG_ID}/articles.json`, { 
+      method: "POST", 
+      headers: { "X-Shopify-Access-Token": SHOPIFY_API, "Content-Type": "application/json" }, 
+      body: JSON.stringify(articleData), 
+    });
+
+    if (!res.ok) {
+      // Citim textul erorii din corpul răspunsului
+      const errorText = await res.text();
+      console.error(`❌ EROARE DETALIATĂ: Shopify returnează HTTP ${res.status}. Răspuns: ${errorText}`);
+      throw new Error(`HTTP ${res.status} - ${errorText.substring(0, 150)}...`);
+    }
+
     const data = await res.json();
+    console.log(`✅ Draft creat: ${data.article.title}`);
     return data.article.handle;
   } catch (err) {
     console.error("❌ Creare draft error:", err.message);
