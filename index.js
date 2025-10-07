@@ -1,19 +1,18 @@
 /* =====================================================
-   🤖 Otto SEO AI v7 — Sofipex Smart SEO (Render Ready) — Versiune Fixată v4
+   🤖 Otto SEO AI v7 — Sofipex Smart SEO (Render Ready) — Versiune Fixată v5
    -----------------------------------------------------
-   ✅ Integrare Google Trends real-time (România) (FIX: handle undefined trends)
-   ✅ GPT filtrare trenduri relevante + AI score (FIX: guard pentru trends undefined)
+   ✅ Integrare Google Trends real-time (România) (FIX: scrape HTML în loc de RSS depreciat)
+   ✅ GPT filtrare trenduri relevante + AI score
    ✅ GSC 28 zile + scor SEO per produs
-   ✅ Shopify SEO auto-update
+   ✅ Shopify SEO auto-update (FIX: metafields pentru meta desc în articles)
    ✅ Dashboard public cu reoptimizare manuală
    ✅ Google Sheets tab separat (Scoruri + Trenduri + Rapoarte)
    ✅ SendGrid raport complet
    ===================================================== 
    FIX-uri noi:
-   - Trends undefined: Guard în filterTrendsWithAI (!trends || length==0), fallback prompt cu KEYWORDS dacă gol.
-   - Logging extins în fetchGoogleTrends pentru debug (ce eroare exactă).
-   - Dacă trends gol/undefined, folosește direct un keyword random din listă pentru articol.
-   - Asigură că relevant nu crash dacă empty.
+   - Trends: Nou fetch via scrape https://trends.google.com/trending?geo=RO (parse title-urile din HTML, evită 404 RSS).
+   - Meta desc articles: Adaugă metafields SEO în payload (namespace "seo", key "description") + PUT separat dacă nu salvează.
+   - Logging: Mai mult în createArticle pentru confirm metafields.
    */
 
 import express from "express";
@@ -175,7 +174,7 @@ async function updateProduct(id, updates) {
   }
 }
 
-/* === 📝 Publicare Articol pe Shopify === */
+/* === 📝 Publicare Articol pe Shopify (FIX: metafields SEO + update separat) === */
 async function createShopifyArticle(article) {
   try {
     if (!article.content_html || article.content_html.trim().length < 500) {
@@ -187,6 +186,7 @@ async function createShopifyArticle(article) {
       article.meta_description = `Descoperă ${article.title} sustenabile la Sofipex: soluții eco pentru fast-food și catering. Calitate premium, prețuri accesibile.`;
     }
 
+    // Payload inițial cu direct fields
     const articleData = {
       article: {
         title: article.title || article.meta_title,
@@ -195,19 +195,37 @@ async function createShopifyArticle(article) {
         blog_id: BLOG_ID,
         body_html: article.content_html,
         meta_title: article.meta_title,
-        meta_description: article.meta_description,
+        meta_description: article.meta_description, // Direct
         published: false,
       },
     };
 
-    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/blogs/${BLOG_ID}/articles.json`, {
+    let res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/blogs/${BLOG_ID}/articles.json`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": SHOPIFY_API },
       body: JSON.stringify(articleData),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    console.log(`✅ Draft creat: ${data.article.title}`);
+    const articleId = data.article.id;
+    console.log(`✅ Draft creat: ${data.article.title} | ID: ${articleId} | Meta desc direct: "${article.meta_description.substring(0, 50)}..."`);
+
+    // FIX: Adaugă metafields SEO separat (dacă direct nu salvează)
+    const seoMetafields = [
+      { namespace: "seo", key: "meta_title", value: article.meta_title, type: "single_line_text_field" },
+      { namespace: "seo", key: "meta_description", value: article.meta_description, type: "single_line_text_field" }
+    ];
+    const updateRes = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/articles/${articleId}.json`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": SHOPIFY_API },
+      body: JSON.stringify({ article: { metafields: seoMetafields } }),
+    });
+    if (updateRes.ok) {
+      console.log(`✅ Metafields SEO adaugate pentru article ${articleId}: meta desc "${article.meta_description.substring(0, 50)}..."`);
+    } else {
+      console.warn(`⚠️ Metafields update fail: ${updateRes.status}`);
+    }
+
     return data.article.handle;
   } catch (err) {
     console.error("❌ Creare draft error:", err.message);
@@ -244,38 +262,39 @@ async function fetchGSCData() {
   }
 }
 
-/* === 🌍 Google Trends (FIX: logging detaliat) === */
+/* === 🌍 Google Trends (FIX: scrape HTML trending page) === */
 async function fetchGoogleTrends() {
-  console.log("🔍 Starting fetch Trends...");
+  console.log("🔍 Starting scrape Trends page...");
   try {
-    const response = await fetch("https://trends.google.com/trends/trendingsearches/daily/rss?geo=RO");
+    const response = await fetch("https://trends.google.com/trending?geo=RO", {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" } // Evită block
+    });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
-    const xml = await response.text();
-    console.log("✅ XML fetched, length:", xml.length);
-    const matches = [...xml.matchAll(/<title>(.*?)<\/title>/g)].map((m) => m[1]);
-    const trends = matches.slice(2, 22);
-    console.log(`✅ Trends: ${trends.length} fetch-uite (ex: ${trends[0] || 'none'})`);
+    const html = await response.text();
+    console.log("✅ HTML scraped, length:", html.length);
+    
+    // Parse simple: Extrage din <div class="feed-item"> <span class="title">Trend</span>
+    const trendMatches = [...html.matchAll(/<span[^>]*class="title"[^>]*>(.*?)<\/span>/gi)].map(m => m[1].trim().replace(/<[^>]*>/g, ''));
+    const trends = [...new Set(trendMatches)].slice(0, 20); // Unique, top 20
+    console.log(`✅ Trends scraped: ${trends.length} (ex: ${trends[0] || 'none'})`);
     return trends;
   } catch (e) {
-    console.error("❌ Trends error details:", e.message, "| Full error:", e);
-    return []; // Asigură return []
+    console.error("❌ Trends scrape error details:", e.message, "| Full error:", e);
+    return []; // Fallback la KEYWORDS în filter
   }
 }
 
-/* === 🧠 GPT filtrare (FIX: guard undefined trends) === */
+/* === 🧠 GPT filtrare === */
 async function filterTrendsWithAI(trends, recentTrends = []) {
-  // FIX: Guard pentru trends undefined
   if (!trends || trends.length === 0) {
     console.log("⚠️ Trends empty/undefined, folosesc fallback din KEYWORDS");
-    // Returnează un "trend" random din keywords ca relevant
     const fallbackTrend = KEYWORDS[Math.floor(Math.random() * KEYWORDS.length)];
     return [{ trend: fallbackTrend, score: 90 }];
   }
   
   const exclude = recentTrends.join(", ");
-  // Dacă trends gol după guard, nu ajunge aici
   const prompt = `
 Selectează din lista de mai jos doar trendurile relevante pentru Sofipex (nișa: ${KEYWORDS.join(", ")}).
 Excludere trenduri recente procesate: ${exclude || "niciuna"}.
@@ -347,7 +366,7 @@ JSON EXACT: {"title": "...", "meta_title": "...", "meta_description": "...", "ta
       meta_title: `${trend} | Sofipex.ro`,
       meta_description: `Sofipex: Soluții eco pentru ${trend}. Ambalaje biodegradabile de calitate superioară pentru fast-food și catering.`,
       tags: ["sustenabilitate", "eco", "ambalaje"],
-      content_html: `<h1>${trend}</h1><p>Articol detaliat generat de AI despre ${trend}. Sofipex oferă soluții inovatoare pentru ambalaje eco...</p>`, // Extins ca mai sus
+      content_html: `<h1>${trend}</h1><p>Articol detaliat generat de AI despre ${trend}. Sofipex oferă soluții inovatoare pentru ambalaje eco...</p>`,
     };
   }
 }
@@ -447,7 +466,7 @@ async function sendReportEmail(trend, articleHandle, optimizedProductName, produ
   }
 }
 
-/* === 🚀 Run (FIX: handle trends undefined) === */
+/* === 🚀 Run === */
 async function runSEOAutomation() {
   console.log("🚀 Started...");
   await ensureHeaders("Scoruri", ["Data", "Keyword", "Score"]);
@@ -456,10 +475,10 @@ async function runSEOAutomation() {
 
   const gsc = await fetchGSCData();
   const products = await getProducts();
-  const trends = await fetchGoogleTrends() || []; // FIX: || [] dacă undefined
+  const trends = await fetchGoogleTrends();
   const recentTrends = await getRecentTrends();
 
-  // Pas 1: Trend nou (FIX: nu crash dacă relevant empty)
+  // Pas 1: Trend nou
   const relevant = await filterTrendsWithAI(trends, recentTrends);
   const relevantSorted = relevant.sort((a, b) => b.score - a.score);
   const trend = relevantSorted[0]?.trend || KEYWORDS[Math.floor(Math.random() * KEYWORDS.length)];
