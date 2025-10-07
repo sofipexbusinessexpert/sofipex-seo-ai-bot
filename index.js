@@ -174,6 +174,21 @@ function sanitizeMetaField(text, maxLen) {
   return clampText(stripHtmlAndWhitespace(text), maxLen);
 }
 
+// === On-Page block markers and helpers ===
+const AI_BLOCK_START = '<!-- THEMASTREM-SEO-AI:BEGIN -->';
+const AI_BLOCK_END = '<!-- THEMASTREM-SEO-AI:END -->';
+function stripAiBlock(html) {
+  const content = String(html || '');
+  const start = content.indexOf(AI_BLOCK_START);
+  if (start === -1) return content;
+  const end = content.indexOf(AI_BLOCK_END, start);
+  if (end === -1) return content.slice(0, start);
+  return content.slice(0, start) + content.slice(end + AI_BLOCK_END.length);
+}
+function wrapAiBlock(blockHtml) {
+  return `${AI_BLOCK_START}\n${String(blockHtml || '').trim()}\n${AI_BLOCK_END}\n`;
+}
+
 // === App State (persisted in Google Sheets 'State' tab, with in-memory fallback) ===
 async function getStateValue(key) {
   try {
@@ -283,7 +298,7 @@ async function prepareNextOnPageProposal() {
     const targetKeyword = midScores[0] || scores.find(s => Number(s.score) < 80) || { keyword: KEYWORDS[0] };
 
     const targetProduct = await chooseNextProduct(products);
-    const oldDescriptionClean = targetProduct.body_html || '';
+    const oldDescriptionClean = stripAiBlock(targetProduct.body_html || '');
     const proposedSeo = await runWithRetry(() => generateSEOContent(targetProduct.title, oldDescriptionClean || ""));
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
@@ -587,7 +602,7 @@ async function runSEOAutomation() {
     } catch {}
 
     // B. Generează și Stochează Propunerea Descriere (On-Page)
-    const oldDescriptionClean = targetProduct.body_html || '';
+    const oldDescriptionClean = stripAiBlock(targetProduct.body_html || '');
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
     try {
@@ -673,7 +688,7 @@ async function applyProposedOptimization(proposal) {
         // Ensure meta fields are set/clamped during approval to prevent Shopify from inferring from body
         const safeTitle = sanitizeMetaField(proposal.productTitle || '', 60);
         const safeDesc = sanitizeMetaField(proposal.proposedMetaDescription || proposal.newDescription || proposal.oldDescription || proposal.productTitle || '', 160);
-        const updates = { body_html: proposal.newDescription, meta_title: proposal.proposedMetaTitle || safeTitle, meta_description: safeDesc };
+        const updates = { body_html: wrapAiBlock(proposal.newDescription), meta_title: proposal.proposedMetaTitle || safeTitle, meta_description: safeDesc };
         await updateProduct(proposal.productId, updates); 
         await addOptimizedProductId(proposal.productId);
         return true;
