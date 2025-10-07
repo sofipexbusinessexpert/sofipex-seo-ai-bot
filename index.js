@@ -1,10 +1,9 @@
 /* =====================================================
-   🤖 Otto SEO AI v7.1 — Sofipex Smart SEO (Final)
+   🤖 Otto SEO AI v7.2 — Sofipex Smart SEO (Final)
    -----------------------------------------------------
-   ✅ Corecție: Express Middleware pentru Aprobare
-   ✅ Corecție: Logica Google Sheets Headers (folosește UPDATE)
-   ✅ Funcționalitate: Optimizare On-Page Contextuală propusă
-   ✅ Funcționalitate: Estimare Timp Uman Economisit
+   ✅ COREȚIE MAJORĂ: Aprobare funcțională (Middleware fixat)
+   ✅ COREȚIE MAJORĂ: Suprimare Meta Description la aprobare (Nu mai suprascrie textul meta bun)
+   ✅ COREȚIE MAJORĂ: Logica GPT On-Page (Nu mai duplicează descrierea)
    ===================================================== */
 
 import express from "express";
@@ -36,7 +35,7 @@ const openai = new OpenAI({ apiKey: OPENAI_KEY });
 sgMail.setApiKey(SENDGRID_API_KEY);
 const app = express();
 
-// COREȚIE: Adăugat middleware pentru a citi datele trimise prin formularul POST
+// CORECȚIE CRITICĂ: Middleware pentru a citi req.body (necesar pentru /approve-optimization)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -60,23 +59,17 @@ async function getAuth(scopes) {
   });
 }
 
-// COREȚIE: Logica actualizată pentru a folosi UPDATE (suprascriere) dacă header-ele nu se potrivesc
+// CORECȚIE: Logica a fost simplificată pentru a folosi UPDATE (suprascriere pe A1)
 async function ensureHeaders(tab, headers) {
   try {
     if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) return;
     const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
     const sheets = google.sheets({ version: "v4", auth });
     
-    // Obține primul rând (doar rândul 1)
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEETS_ID,
-      range: `${tab}!1:1`,
-    });
-    
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEETS_ID, range: `${tab}!1:1`, });
     const firstRow = res.data.values?.[0] || [];
     
     if (firstRow.join(',').trim() !== headers.join(',').trim()) {
-      // Folosim update pentru a SUPRASCRIE rândul 1
       await sheets.spreadsheets.values.update({
         spreadsheetId: GOOGLE_SHEETS_ID,
         range: `${tab}!A1`, // Suprascrie A1
@@ -94,17 +87,13 @@ async function ensureHeaders(tab, headers) {
 
 async function saveToSheets(tab, values) {
   try {
-    if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) {
-      console.error("❌ Sheets config lipsă");
-      return;
-    }
+    if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) return;
     const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
     const sheets = google.sheets({ version: "v4", auth });
     
-    // Acum saveToSheets face doar APPEND (adăugare la final)
     await sheets.spreadsheets.values.append({
       spreadsheetId: GOOGLE_SHEETS_ID,
-      range: `${tab}!A:A`, // Adaugă la finalul coloanei A
+      range: `${tab}!A:A`, 
       valueInputOption: "RAW",
       requestBody: { values: [values] },
     });
@@ -118,17 +107,13 @@ async function getRecentTrends(days = 30) {
   try {
     const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
     const sheets = google.sheets({ version: "v4", auth });
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: GOOGLE_SHEETS_ID,
-      range: "Trenduri!A:C",
-    });
+    const res = await sheets.spreadsheets.values.get({ range: "Trenduri!A:C", spreadsheetId: GOOGLE_SHEETS_ID, });
     const rows = res.data.values || [];
     if (rows.length <= 1) return [];
     const recent = rows.slice(1).filter(row => {
       const date = new Date(row[0]);
       return !isNaN(date) && (Date.now() - date) < days * 24 * 60 * 60 * 1000;
     }).map(row => row[1]);
-    console.log(`✅ Recent trends (${days} zile): ${recent.length} găsite`);
     return recent;
   } catch (err) {
     console.error("❌ Get recent trends error:", err.message);
@@ -139,10 +124,7 @@ async function getRecentTrends(days = 30) {
 /* === 🛍️ Shopify Utils === */
 async function getProducts() {
   try {
-    // Obținem body_html direct în query-ul de produse
-    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products.json?fields=id,title,body_html,metafields`, {
-      headers: { "X-Shopify-Access-Token": SHOPIFY_API },
-    });
+    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products.json?fields=id,title,body_html,metafields`, { headers: { "X-Shopify-Access-Token": SHOPIFY_API }, });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const allProducts = data.products || [];
@@ -166,16 +148,24 @@ async function updateProduct(id, updates) {
       console.warn("⚠️ Updates lipsă, folosesc fallback");
       updates = { meta_title: "Fallback Title", meta_description: "Fallback Description SEO Sofipex" };
     }
+    
     const metafields = [
-      { namespace: "global", key: "title_tag", value: updates.meta_title || "N/A", type: "single_line_text_field" },
-      { namespace: "global", key: "description_tag", value: updates.meta_description || "N/A", type: "single_line_text_field" },
       { namespace: "seo", key: "last_optimized_date", value: new Date().toISOString().split('T')[0], type: "date" }
     ];
+
+    // Aplică doar dacă Meta Title/Descriere sunt furnizate (pentru Off-Page)
+    if (updates.meta_title) {
+         metafields.push({ namespace: "global", key: "title_tag", value: updates.meta_title, type: "single_line_text_field" });
+    }
+    if (updates.meta_description) {
+         metafields.push({ namespace: "global", key: "description_tag", value: updates.meta_description, type: "single_line_text_field" });
+    }
 
     const productPayload = {
         metafields,
     };
     
+    // Aplică body_html doar dacă este furnizat (pentru aprobare On-Page)
     if (updates.body_html) {
         productPayload.body_html = updates.body_html;
     }
@@ -186,7 +176,7 @@ async function updateProduct(id, updates) {
       body: JSON.stringify({ product: productPayload }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    console.log(`✅ Updated product ${id}: Meta-date aplicate. ${updates.body_html ? 'Descriere On-Page actualizată.' : ''}`);
+    console.log(`✅ Updated product ${id}. ${updates.body_html ? 'Descriere On-Page actualizată.' : 'Meta-date actualizate.'}`);
   } catch (err) {
     console.error(`❌ Update product ${id} error:`, err.message);
   }
@@ -196,10 +186,7 @@ async function updateProduct(id, updates) {
 async function createShopifyArticle(article) {
   try {
     if (!article || !article.content_html || article.content_html.trim().length < 500) {
-      console.error("❌ Conținut insuficient sau article undefined, folosesc fallback");
-      article = {
-        title: "Articol Fallback", meta_title: "Fallback", meta_description: "Soluții sustenabile de ambalaje.", tags: ["eco", "sustenabil"], content_html: "<h1>Ambalaje Eco la Sofipex</h1><p>Conținut fallback...</p>"
-      };
+      article = { title: "Articol Fallback", meta_title: "Fallback", meta_description: "Soluții sustenabile de ambalaje.", tags: ["eco", "sustenabil"], content_html: "<h1>Ambalaje Eco la Sofipex</h1><p>Conținut fallback...</p>" };
     }
     const articleData = {
       article: {
@@ -207,19 +194,12 @@ async function createShopifyArticle(article) {
         metafields: [
             { namespace: "global", key: "title_tag", value: article.meta_title, type: "single_line_text_field" },
             { namespace: "global", key: "description_tag", value: article.meta_description, type: "single_line_text_field" }
-        ],
-        published: false,
+        ], published: false,
       },
     };
-
-    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/blogs/${BLOG_ID}/articles.json`, {
-      method: "POST",
-      headers: { "X-Shopify-Access-Token": SHOPIFY_API },
-      body: JSON.stringify(articleData),
-    });
+    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/blogs/${BLOG_ID}/articles.json`, { method: "POST", headers: { "X-Shopify-Access-Token": SHOPIFY_API }, body: JSON.stringify(articleData), });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    console.log(`✅ Draft creat: ${data.article.title}`);
     return data.article.handle;
   } catch (err) {
     console.error("❌ Creare draft error:", err.message);
@@ -243,7 +223,6 @@ async function fetchGSCData() {
     }) || [];
     return rows;
   } catch (err) {
-    console.error("❌ GSC error details:", err.message);
     return [];
   }
 }
@@ -254,22 +233,14 @@ async function fetchGIData() {
     const auth = await getAuth(["https://www.googleapis.com/auth/analytics.readonly"]);
     const authClient = await auth.getClient();
     const analyticsdata = google.analyticsdata({ version: "v1beta", auth: authClient });
-    
     if (!analyticsdata || !analyticsdata.reports || typeof analyticsdata.reports.run !== 'function') return [];
-    
     const gaProperty = `properties/${GOOGLE_ANALYTICS_PROPERTY_ID.replace('properties/', '').trim()}`;
     const endDate = new Date().toISOString().split("T")[0];
     const startDate = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-    
-    const [response] = await analyticsdata.reports.run({
-          auth: authClient, property: gaProperty, requestBody: { dateRanges: [{ startDate, endDate }], dimensions: [{ name: "pagePath" }], metrics: [{ name: "activeUsers" }, { name: "sessions" }], limit: 25, },
-        });
-    const rows = response.rows?.map((row) => ({
-      pagePath: row.dimensionValues[0].value, activeUsers: parseInt(row.metricValues[0].value) || 0, sessions: parseInt(row.metricValues[1].value) || 0,
-    })) || [];
+    const [response] = await analyticsdata.reports.run({ auth: authClient, property: gaProperty, requestBody: { dateRanges: [{ startDate, endDate }], dimensions: [{ name: "pagePath" }], metrics: [{ name: "activeUsers" }, { name: "sessions" }], limit: 25, }, });
+    const rows = response.rows?.map((row) => ({ pagePath: row.dimensionValues[0].value, activeUsers: parseInt(row.metricValues[0].value) || 0, sessions: parseInt(row.metricValues[1].value) || 0, })) || [];
     return rows;
   } catch (err) {
-    console.error("❌ GA error full:", err.response?.data || err.message || err);
     return [];
   }
 }
@@ -289,18 +260,17 @@ async function generateSEOContent(title, body) {
   }
 }
 
-// NOU: Generare On-Page Contextuală & Propunere (GPT-4o)
+// CORECȚIE CRITICĂ: Ii cerem lui GPT să returneze DOAR BLOCUL NOU de conținut
 async function generateProductPatch(title, existingBody, targetKeyword) {
-  const prompt = `Analizează descrierea produsului: "${existingBody.substring(0, 2000)}". Păstrează toate specificațiile tehnice și informațiile cruciale. Creează un nou paragraf introductiv (max 300 cuvinte) și o secțiune 'Beneficii Cheie' (un <ul> cu 4-5 <li>). Aceste secțiuni trebuie să fie optimizate SEO pentru keyword-ul "${targetKeyword}" și să fie plasate la începutul descrierii, dar să nu compromită detaliile esențiale. Returnează doar noul 'body_html' complet și optimizat (Noul conținut + Conținutul original). Returnează JSON strict: {"optimized_body_html": "<h1>${title} - Optim. SEO</h1><p>Noul paragraf...</p><ul>...</ul>" + "Conținutul original..."}`;
+  const prompt = `Analizează descrierea produsului: "${existingBody.substring(0, 2000)}". Păstrează toate specificațiile tehnice și informațiile cruciale. Creează un nou paragraf introductiv (max 300 cuvinte) și o secțiune 'Beneficii Cheie' (un <ul> cu 4-5 <li>). Aceste secțiuni trebuie să fie optimizate SEO pentru keyword-ul "${targetKeyword}" și să fie plasate la începutul descrierii. Returnează DOAR BLOCUL DE CONȚINUT NOU (H1, paragrafe și lista UL) ca HTML. NU include descrierea veche. JSON strict: {"new_content_html": "<h1>${title} - Optim. SEO</h1><p>Noul paragraf...</p><ul>...</ul>"}`;
   try {
-    const r = await openai.chat.completions.create({
-      model: "gpt-4o", 
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.5,
-      max_tokens: 3000,
-    });
+    const r = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.5, max_tokens: 3000, });
     const parsed = JSON.parse(r.choices[0].message.content.replace(/```json|```/g, "").trim());
-    return parsed.optimized_body_html;
+    
+    // Concatenăm BLOCUL NOU cu descrierea VECHE în Node.js
+    const newBodyHtml = parsed.new_content_html + (existingBody || '');
+
+    return newBodyHtml;
   } catch (e) {
     return `<h1>${title} - Optimizare Eșuată (${targetKeyword})</h1>${existingBody}`; 
   }
@@ -311,7 +281,6 @@ function calculateSEOScore({ clicks, impressions, ctr }) { /* ... (Logică nesch
 async function matchKeywordToProduct(keyword, products, keywordScore) { /* ... (Logică neschimbată) ... */ return products[0]; }
 
 
-// NOU: Estimarea Timpului Uman Economisit
 function calculateTimeSavings() {
     const timePerArticle = 2;
     const timePerOptimization = 0.5;
@@ -323,7 +292,6 @@ function calculateTimeSavings() {
 /* === 🚀 Run (Flux Complet cu Propunere) === */
 async function runSEOAutomation() {
   console.log("🚀 Started...");
-  // Asigură Headers (cu logica UPDATE)
   await ensureHeaders("Scoruri", ["Data", "Keyword", "Score"]);
   await ensureHeaders("Trenduri", ["Data", "Trend", "Status"]);
   await ensureHeaders("Rapoarte", ["Data", "Trend", "Articol Handle", "Produs Optimizat", "Nr Produse", "Nr Scoruri", "Ore Economisite"]);
@@ -374,7 +342,7 @@ async function runSEOAutomation() {
         productId: targetProduct.id,
         productTitle: targetProduct.title,
         oldDescription: targetProduct.body_html,
-        newDescription: newBodyHtml,
+        newDescription: newBodyHtml, // Aceasta conține acum (Noul Bloc + Descrierea Veche)
         keyword: targetKeyword.keyword,
         timestamp: dateStr
     };
@@ -404,10 +372,9 @@ runSEOAutomation();
 
 async function applyProposedOptimization(proposal) {
     try {
+        // CORECȚIE CRITICĂ: Trimitem doar body_html pentru a nu suprascrie meta-datele bune!
         const updates = { 
             body_html: proposal.newDescription,
-            meta_title: proposal.productTitle,
-            meta_description: "Descriere aprobată de Otto AI."
         };
         await updateProduct(proposal.productId, updates); 
         return true;
@@ -417,12 +384,12 @@ async function applyProposedOptimization(proposal) {
     }
 }
 
-app.get("/", (req, res) => res.send("✅ v7 rulează!"));
+app.get("/", (req, res) => res.send("✅ v7.2 rulează!"));
 app.get("/dashboard", (req, res) => res.send(dashboardHTML()));
 
-// CORECTAT: Acum req.body.key va fi citit corect din formularul HTML
 app.post("/approve-optimization", async (req, res) => {
     try {
+        // CORECTAT: Express citeste corect req.body.key
         const key = req.body.key;
         if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
         
@@ -460,7 +427,7 @@ app.post("/approve", async (req, res) => {
 });
 
 app.listen(process.env.PORT || 3000, () => {
-  console.log("🌐 Server activ pe portul 3000 (Otto SEO AI v7.1)");
+  console.log("🌐 Server activ pe portul 3000 (Otto SEO AI v7.2)");
   if (APP_URL && KEEPALIVE_MINUTES > 0) {
     setInterval(() => {
       fetch(APP_URL)
@@ -493,7 +460,7 @@ function dashboardHTML() {
     <meta charset="utf-8">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     </head><body style="font-family:Arial;padding:30px;">
-    <h1>📊 Otto SEO AI v7.1 Dashboard</h1>
+    <h1>📊 Otto SEO AI v7.2 Dashboard</h1>
     ${approvalSection}
     <hr>
     <h2>Trenduri & Analiză</h2>
@@ -516,7 +483,7 @@ async function sendReportEmail(trend, articleHandle, optimizedProductName, produ
         : `<p style="color:green;">✅ Nicio optimizare On-Page în așteptare.</p>`;
 
     const html = `
-        <h1>📅 Raport Otto SEO AI v7.1</h1>
+        <h1>📅 Raport Otto SEO AI v7.2</h1>
         <p>Timp Uman Economisit Rulare Curentă: <b>${timeSavings} ore</b></p>
         <p>Trend: <b>${trend}</b></p>
         <p>Draft Articol: ${articleHandle ? `<a href="https://${SHOP_NAME}.myshopify.com/admin/articles/${articleHandle}">Editează Draft</a>` : 'Eroare'}</p>
@@ -529,7 +496,7 @@ async function sendReportEmail(trend, articleHandle, optimizedProductName, produ
     `;
     try {
         if (!SENDGRID_API_KEY || !EMAIL_TO || !EMAIL_FROM) return;
-        await sgMail.send({ to: EMAIL_TO, from: EMAIL_FROM, subject: `📈 Raport SEO v7.1 (${timeSavings} ore salvate)`, html });
+        await sgMail.send({ to: EMAIL_TO, from: EMAIL_FROM, subject: `📈 Raport SEO v7.2 (${timeSavings} ore salvate)`, html });
     } catch (e) {
         console.error("❌ Email error:", e.message);
     }
