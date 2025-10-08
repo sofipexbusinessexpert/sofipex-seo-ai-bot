@@ -959,6 +959,25 @@ app.post("/toggle-daily-product-blog", async (req, res) => {
     }
 });
 
+app.post("/generate-blog-now", async (req, res) => {
+    try {
+        const key = req.body.key;
+        if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden");
+        const productsAll = await getProducts();
+        const blogProduct = await chooseNextProductForBlog(productsAll);
+        const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
+        const handle = await createShopifyArticle(article);
+        await addBlogPublishedProductId(blogProduct.id);
+        if (handle) {
+          const dateStr = new Date().toLocaleString("ro-RO");
+          saveToSheets("Trenduri", [dateStr, "Produs: Articol generat manual", `Draft: ${handle}`]);
+        }
+        return res.redirect(303, '/dashboard');
+    } catch (e) {
+        res.status(500).send("Eroare: " + e.message);
+    }
+});
+
 app.post("/approve", async (req, res) => {
     return res.redirect(307, '/approve-optimization'); 
 });
@@ -1042,6 +1061,10 @@ async function dashboardHTML() {
           Activează generarea zilnică de articole pe produs
         </label>
         <button type="submit" style="padding:8px 14px; margin-top:8px;">💾 Salvează</button>
+      </form>
+      <form method="POST" action="/generate-blog-now" style="margin-top:10px;">
+        <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
+        <button type="submit" style="padding:8px 14px;">📰 Generează articol acum (următorul produs)</button>
       </form>
     `;
 
