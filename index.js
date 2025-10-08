@@ -758,8 +758,9 @@ async function runSEOAutomation() {
   }
 
   // Pas 4: Raport
-  saveToSheets("Rapoarte", [dateStr, trend, articleHandle || "Eroare", optimizedProductName, products.length, scores.length, timeSavings]);
-  await sendReportEmail(trend, articleHandle, optimizedProductName, products.length, scores, gaData, timeSavings);
+  const reportTopic = articleHandle ? "Blog produs" : "—";
+  saveToSheets("Rapoarte", [dateStr, reportTopic, articleHandle || "Eroare", optimizedProductName, products.length, scores.length, timeSavings]);
+  await sendReportEmail(reportTopic, articleHandle, optimizedProductName, products.length, scores, gaData, timeSavings);
 
   console.log("✅ Finished!");
 }
