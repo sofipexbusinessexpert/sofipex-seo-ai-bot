@@ -737,6 +737,7 @@ async function runSEOAutomation() {
     const jsonLd = buildArticleJsonLd({ title: article.title, description: article.meta_description || article.title, imageUrl });
     article.content_html = `${jsonLd}\n${article.content_html}`;
     articleHandle = await createShopifyArticle(article, imageUrl);
+    await pingSearchEngines();
       await addBlogPublishedProductId(blogProduct.id);
     }
   } catch (e) {
@@ -877,6 +878,10 @@ async function applyProposedOptimization(proposal) {
         const updates = { body_html: wrapAiBlock(proposal.newDescription), meta_title: proposal.proposedMetaTitle || safeTitle, meta_description: safeDesc };
         await updateProduct(proposal.productId, updates); 
         await addOptimizedProductId(proposal.productId);
+        // Ensure ALT texts and ping sitemap
+        const productFull = await fetchProductById(proposal.productId);
+        if (productFull) { await ensureProductImageAlts(productFull); }
+        await pingSearchEngines();
         return true;
     } catch (err) {
         console.error(`❌ Aprobare update produs ${proposal.productId} eșuată:`, err.message);
@@ -1069,6 +1074,7 @@ app.post("/generate-blog-now", async (req, res) => {
         article.content_html = `${jsonLd}\n${article.content_html}`;
         const handle = await createShopifyArticle(article, imageUrl);
         await addBlogPublishedProductId(blogProduct.id);
+        await pingSearchEngines();
         if (handle) {
           const dateStr = new Date().toLocaleString("ro-RO");
           saveToSheets("Trenduri", [dateStr, "Produs: Articol generat manual", `Draft: ${handle}`]);
