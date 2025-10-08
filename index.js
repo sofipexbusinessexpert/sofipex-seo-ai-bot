@@ -266,6 +266,20 @@ async function removeBlacklistedProductId(id) {
   await setStateValue("blacklist_product_ids", Array.from(set).join(','));
 }
 
+async function getBlogPublishedProductIds() {
+  const raw = await getStateValue("blog_published_product_ids");
+  if (!raw) return new Set();
+  try {
+    const arr = String(raw).split(',').map(s => s.trim()).filter(Boolean);
+    return new Set(arr);
+  } catch { return new Set(); }
+}
+async function addBlogPublishedProductId(id) {
+  const set = await getBlogPublishedProductIds();
+  set.add(String(id));
+  await setStateValue("blog_published_product_ids", Array.from(set).join(','));
+}
+
 async function chooseNextProduct(products) {
   if (!products || products.length === 0) throw new Error("No products available");
   const optimizedSet = await getOptimizedProductIds();
@@ -282,6 +296,24 @@ async function chooseNextProduct(products) {
   }
   const chosen = productsSorted[nextIndex];
   await setStateValue("last_onpage_product_id", chosen.id);
+  return chosen;
+}
+
+async function chooseNextProductForBlog(products) {
+  if (!products || products.length === 0) throw new Error("No products available");
+  const publishedSet = await getBlogPublishedProductIds();
+  const candidates = products.filter(p => !publishedSet.has(String(p.id)));
+  const pool = candidates.length > 0 ? candidates : products;
+  const productsSorted = [...pool].sort((a, b) => Number(a.id) - Number(b.id));
+  const lastIdRaw = await getStateValue("last_blog_product_id");
+  const lastId = lastIdRaw ? String(lastIdRaw) : null;
+  let nextIndex = 0;
+  if (lastId) {
+    const currentIndex = productsSorted.findIndex(p => String(p.id) === lastId);
+    nextIndex = currentIndex >= 0 ? (currentIndex + 1) % productsSorted.length : 0;
+  }
+  const chosen = productsSorted[nextIndex];
+  await setStateValue("last_blog_product_id", chosen.id);
   return chosen;
 }
 
@@ -541,8 +573,15 @@ Returnează DOAR BLOCUL NOU (fără descrierea veche) ca HTML valid și compact:
     throw e; 
   }
 }
-async function generateBlogArticle(trend) { 
-  const prompt = `Creează articol SEO detaliat despre "${trend}" pentru Sofipex.ro (...). JSON EXACT: {"title": "...", "meta_title": "...", "meta_description": "...", "tags": [...], "content_html": "<h1>...</h1>"}`;
+async function generateBlogArticleFromProduct(product) { 
+  const cleanBody = stripHtmlAndWhitespace(product.body_html || '').slice(0, 1500);
+  const prompt = `Creează un articol SEO detaliat despre produsul "${product.title}" (Shopify). Folosește informații din descriere: "${cleanBody}" și structurează conținutul pentru a ranka în Google.
+Cerințe:
+- Include H1 cu numele produsului și H2 pentru secțiuni (Introducere, Beneficii, Utilizări, Specificații, Întrebări frecvente, Concluzie)
+- Include o listă cu 4-6 beneficii concrete și un FAQ cu 3-5 întrebări
+- Integrează cuvinte-cheie derivate din titlu/specificații în mod natural (fără stuffing)
+- Adaugă meta title (<=60) și meta description (<=160) persuasive
+Returnează JSON EXACT: {"title": "...", "meta_title": "...", "meta_description": "...", "tags": ["produs"], "content_html": "<h1>...</h1>"}`;
   try {
     const r = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.7, max_tokens: 2000, });
     const content = r.choices[0].message.content.replace(/```json|```/g, "").trim();
@@ -575,27 +614,26 @@ async function runSEOAutomation() {
   ]);
   const gscKeywords = gsc;
   
-  // Pas 1: Trend nou și Articol Draft
-  const relevant = await filterTrendsWithAI(trends, recentTrends, gscKeywords);
-  const relevantSorted = relevant.sort((a, b) => b.score - a.score);
-  const trend = relevantSorted[0]?.trend || KEYWORDS[Math.floor(Math.random() * KEYWORDS.length)];
-  
-  let article = { title: "Eroare AI", meta_title: "Eroare AI", tags: ["fail"], content_html: "" }; 
+  // Pas 1: Articol de blog bazat pe produsul următor (nu pe trend)
+  let articleHandle = null;
   try {
-      article = await runWithRetry(() => generateBlogArticle(trend));
+    const productsAll = await getProducts();
+    const blogProduct = await chooseNextProductForBlog(productsAll);
+    const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
+    articleHandle = await createShopifyArticle(article);
+    await addBlogPublishedProductId(blogProduct.id);
   } catch (e) {
-      console.error("🔴 ESEC FINAL: Articolul nu a putut fi generat după retries. Folosesc fallback.");
+    console.error("🔴 Blog generate error:", e.message);
   }
-  const articleHandle = await createShopifyArticle(article);
 
   // Pas 2: Scoruri & Save
   const scores = gscKeywords.filter(s => Number(s.score) >= 10);
   const dateStr = new Date().toLocaleString("ro-RO");
   scores.forEach(s => saveToSheets("Scoruri", [dateStr, s.keyword, s.score]));
   gaData.forEach(g => saveToSheets("Analytics", [dateStr, g.pagePath, g.activeUsers, g.sessions]));
-  saveToSheets("Trenduri", [dateStr, trend, articleHandle ? `Draft: ${articleHandle}` : "Eroare"]);
+  saveToSheets("Trenduri", [dateStr, "Produs: Articol generat", articleHandle ? `Draft: ${articleHandle}` : "Eroare"]);
 
-  lastRunData = { trends: relevantSorted.slice(0,5), scores, gaData };
+  lastRunData = { trends: [], scores, gaData };
 
   // Pas 3: Optimizare Meta-Date (Direct) și Propunere Descriere (On-Page - Aprobare)
   let optimizedProductName = "Niciunul";
