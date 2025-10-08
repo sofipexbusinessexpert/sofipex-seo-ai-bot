@@ -402,7 +402,7 @@ async function getRecentTrends(days = 30) {
 /* === 🛍️ Shopify Utils === */
 async function getProducts() {
   try {
-    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products.json?fields=id,title,body_html,metafields&limit=250`, { headers: { "X-Shopify-Access-Token": SHOPIFY_API }, });
+    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products.json?fields=id,title,body_html,metafields,image&limit=250`, { headers: { "X-Shopify-Access-Token": SHOPIFY_API }, });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const allProducts = data.products || [];
@@ -437,7 +437,7 @@ async function updateProduct(id, updates) {
     console.log(`✅ Updated: ${logName}. Cooldown set. ${updates.body_html !== undefined ? 'Descriere On-Page aplicată.' : 'Meta-date aplicate.'}`);
   } catch (err) { console.error(`❌ Update product ${id} error:`, err.message); }
 }
-async function createShopifyArticle(article) {
+async function createShopifyArticle(article, productImageUrl) {
   try {
     if (!BLOG_ID) { console.error("❌ Eroare Config: Variabila BLOG_ID lipsește!"); return null; }
     if (!article || !article.content_html || article.content_html.trim().length < 100) { article = { title: "Eroare Generare AI - Fallback", meta_title: "Fallback", meta_description: "Articol de rezervă.", tags: ["eroare", "fallback", "ai"], content_html: `<h1>Articol Eșuat: Revizuiți</h1><p>Conținut de rezervă.</p>` }; }
@@ -446,7 +446,8 @@ async function createShopifyArticle(article) {
         { namespace: "global", key: "title_tag", value: article.meta_title || article.title || "Fallback Title", type: "single_line_text_field" },
         { namespace: "global", key: "description_tag", value: article.meta_description || "Fallback Description", type: "single_line_text_field" }
     ];
-    const articleData = { article: { title: article.title || article.meta_title, author: "Sofipex", tags: article.tags, blog_id: BLOG_ID, body_html: article.content_html, metafields: metafields, published: false, }, };
+    const imagePayload = productImageUrl ? { image: { src: productImageUrl } } : {};
+    const articleData = { article: { title: article.title || article.meta_title, author: "Sofipex", tags: article.tags, blog_id: BLOG_ID, body_html: article.content_html, metafields: metafields, published: false, ...imagePayload }, };
     
     const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/blogs/${BLOG_ID}/articles.json`, { method: "POST", headers: { "X-Shopify-Access-Token": SHOPIFY_API, "Content-Type": "application/json" }, body: JSON.stringify(articleData), });
     if (!res.ok) { const errorText = await res.text(); throw new Error(`HTTP ${res.status} - ${errorText.substring(0, 150)}...`); }
@@ -645,10 +646,11 @@ async function runSEOAutomation() {
   try {
     const blogFlag = (await getStateValue('enable_daily_product_blog')) === '1';
     if (blogFlag) {
-      const productsAll = await getProducts();
-      const blogProduct = await chooseNextProductForBlog(productsAll);
-      const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
-      articleHandle = await createShopifyArticle(article);
+    const productsAll = await getProducts();
+    const blogProduct = await chooseNextProductForBlog(productsAll);
+    const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
+    const imageUrl = blogProduct?.image?.src || blogProduct?.images?.[0]?.src || undefined;
+    articleHandle = await createShopifyArticle(article, imageUrl);
       await addBlogPublishedProductId(blogProduct.id);
     }
   } catch (e) {
@@ -966,7 +968,8 @@ app.post("/generate-blog-now", async (req, res) => {
         const productsAll = await getProducts();
         const blogProduct = await chooseNextProductForBlog(productsAll);
         const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
-        const handle = await createShopifyArticle(article);
+        const imageUrl = blogProduct?.image?.src || blogProduct?.images?.[0]?.src || undefined;
+        const handle = await createShopifyArticle(article, imageUrl);
         await addBlogPublishedProductId(blogProduct.id);
         if (handle) {
           const dateStr = new Date().toLocaleString("ro-RO");
