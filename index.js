@@ -440,15 +440,31 @@ async function fetchGIData() {
     const authClient = await auth.getClient();
     const analyticsdata = google.analyticsdata({ version: "v1beta", auth: authClient });
 
-    if (!analyticsdata || !analyticsdata.properties || typeof analyticsdata.properties.runReport !== 'function') { return []; } 
-
     const gaProperty = `properties/${GOOGLE_ANALYTICS_PROPERTY_ID.replace('properties/', '').trim()}`;
     const endDate = new Date().toISOString().split("T")[0];
     const startDate = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-    const [response] = await analyticsdata.properties.runReport({ auth: authClient, property: gaProperty, requestBody: { dateRanges: [{ startDate, endDate }], dimensions: [{ name: "pagePath" }], metrics: [{ name: "activeUsers" }, { name: "sessions" }], limit: 25, }, });
-    const rows = response.rows?.map((row) => ({ pagePath: row.dimensionValues[0].value, activeUsers: parseInt(row.metricValues[0].value) || 0, sessions: parseInt(row.metricValues[1].value) || 0, })) || [];
+    const res = await analyticsdata.properties.runReport({
+      property: gaProperty,
+      requestBody: {
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: "pagePath" }],
+        metrics: [{ name: "activeUsers" }, { name: "sessions" }],
+        limit: 25,
+      },
+    });
+    const rows = res.data?.rows?.map((row) => ({
+      pagePath: row.dimensionValues?.[0]?.value || '/',
+      activeUsers: parseInt(row.metricValues?.[0]?.value || '0') || 0,
+      sessions: parseInt(row.metricValues?.[1]?.value || '0') || 0,
+    })) || [];
+    if (rows.length === 0) {
+      console.log("GA4: No rows returned. Verify property ID and data availability for the selected date range.");
+    }
     return rows;
-  } catch (err) { return []; }
+  } catch (err) {
+    console.error("GA4 fetch error:", err.message);
+    return [];
+  }
 }
 
 /* === 🌍 Google Trends & GPT Utils === */
