@@ -447,7 +447,8 @@ async function createShopifyArticle(article, productImageUrl) {
         { namespace: "global", key: "description_tag", value: article.meta_description || "Fallback Description", type: "single_line_text_field" }
     ];
     const imagePayload = productImageUrl ? { image: { src: productImageUrl } } : {};
-    const articleData = { article: { title: article.title || article.meta_title, author: "Sofipex", tags: article.tags, blog_id: BLOG_ID, body_html: article.content_html, metafields: metafields, published: false, ...imagePayload }, };
+    const summaryText = sanitizeMetaField(article.meta_description || stripHtmlAndWhitespace(article.content_html).slice(0, 200), 180);
+    const articleData = { article: { title: article.title || article.meta_title, author: "Sofipex", tags: article.tags, blog_id: BLOG_ID, body_html: article.content_html, summary_html: `<p>${summaryText}</p>`, metafields: metafields, published: false, ...imagePayload }, };
     
     const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/blogs/${BLOG_ID}/articles.json`, { method: "POST", headers: { "X-Shopify-Access-Token": SHOPIFY_API, "Content-Type": "application/json" }, body: JSON.stringify(articleData), });
     if (!res.ok) { const errorText = await res.text(); throw new Error(`HTTP ${res.status} - ${errorText.substring(0, 150)}...`); }
