@@ -271,6 +271,53 @@ async function pingSearchEngines() {
   try { await fetch(`https://www.bing.com/ping?sitemap=${encodeURIComponent(SITEMAP_URL)}`); } catch {}
 }
 
+// === Diagnostics & Error logging ===
+async function logError(context, error) {
+  const payload = {
+    time: new Date().toISOString(),
+    context,
+    message: error?.message || String(error),
+    stack: error?.stack ? String(error.stack).slice(0, 4000) : undefined,
+  };
+  console.error(`❌ [${context}]`, payload.message);
+  try { await setStateValue('last_error_json', JSON.stringify(payload)); } catch {}
+}
+
+async function getConfigDiagnostics() {
+  const present = (v) => Boolean(v && String(v).trim().length > 0);
+  const cfg = {
+    SHOP_NAME: present(SHOP_NAME),
+    SHOPIFY_API: present(SHOPIFY_API),
+    BLOG_ID: present(BLOG_ID),
+    OPENAI_KEY: present(OPENAI_KEY),
+    GOOGLE_KEY_PATH: present(GOOGLE_KEY_PATH),
+    GOOGLE_SHEETS_ID: present(GOOGLE_SHEETS_ID),
+    GOOGLE_ANALYTICS_PROPERTY_ID: present(GOOGLE_ANALYTICS_PROPERTY_ID),
+    SENDGRID_API_KEY: present(SENDGRID_API_KEY),
+    EMAIL_TO: present(EMAIL_TO),
+    EMAIL_FROM: present(EMAIL_FROM),
+    APP_URL: present(APP_URL),
+    SITEMAP_URL: present(SITEMAP_URL),
+  };
+  let keyFileOk = false;
+  try { if (GOOGLE_KEY_PATH) { await fs.readFile(GOOGLE_KEY_PATH, 'utf8'); keyFileOk = true; } } catch {}
+  const lastErrorRaw = await getStateValue('last_error_json');
+  let lastError = null; try { if (lastErrorRaw) lastError = JSON.parse(lastErrorRaw); } catch {}
+  return {
+    config: cfg,
+    googleKeyFileReadable: keyFileOk,
+    gaProperty: GOOGLE_ANALYTICS_PROPERTY_ID,
+    gscSiteUrl: 'https://www.sofipex.ro/',
+    lastError,
+    lastRun: {
+      scores: lastRunData.scores?.length || 0,
+      trends: lastRunData.trends?.length || 0,
+      gaRows: lastRunData.gaData?.length || 0,
+      hasPendingOnPage: Boolean(proposedOptimization),
+    }
+  };
+}
+
 // === App State (persisted in Google Sheets 'State' tab, with in-memory fallback) ===
 async function getStateValue(key) {
   try {
@@ -891,6 +938,17 @@ async function applyProposedOptimization(proposal) {
 
 app.get("/", (req, res) => res.send("✅ TheMastreM SEO AI v7.7 rulează!"));
 app.get("/dashboard", async (req, res) => res.send(await dashboardHTML()));
+app.get("/diagnostics", async (req, res) => {
+  try {
+    const key = req.query.key;
+    if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden");
+    const info = await getConfigDiagnostics();
+    res.setHeader('Content-Type', 'application/json');
+    return res.send(JSON.stringify(info, null, 2));
+  } catch (e) {
+    return res.status(500).send("Error: " + e.message);
+  }
+});
 
 app.post("/approve-optimization", async (req, res) => {
     try {
