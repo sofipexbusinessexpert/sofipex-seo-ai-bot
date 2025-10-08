@@ -189,6 +189,88 @@ function wrapAiBlock(blockHtml) {
   return `${AI_BLOCK_START}\n${String(blockHtml || '').trim()}\n${AI_BLOCK_END}\n`;
 }
 
+// === JSON-LD builders ===
+function buildProductJsonLd({ title, description, imageUrl, brand = 'Sofipex' }) {
+  const json = {
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    name: sanitizeMetaField(title || '', 120),
+    description: sanitizeMetaField(stripHtmlAndWhitespace(description || ''), 5000),
+    brand: { '@type': 'Brand', name: brand },
+  };
+  if (imageUrl) json.image = [imageUrl];
+  return `<script type="application/ld+json">${JSON.stringify(json)}</script>`;
+}
+function buildArticleJsonLd({ title, description, imageUrl, author = 'Sofipex' }) {
+  const now = new Date().toISOString();
+  const json = {
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    headline: sanitizeMetaField(title || '', 110),
+    description: sanitizeMetaField(stripHtmlAndWhitespace(description || ''), 5000),
+    author: { '@type': 'Organization', name: author },
+    dateCreated: now,
+    dateModified: now,
+  };
+  if (imageUrl) json.image = [imageUrl];
+  const breadcrumb = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Acasă' },
+      { '@type': 'ListItem', position: 2, name: 'Blog' },
+      { '@type': 'ListItem', position: 3, name: sanitizeMetaField(title || '', 110) },
+    ],
+  };
+  return [
+    `<script type="application/ld+json">${JSON.stringify(json)}</script>`,
+    `<script type="application/ld+json">${JSON.stringify(breadcrumb)}</script>`,
+  ].join('\n');
+}
+
+// === Shopify helpers for images ===
+async function fetchProductById(productId) {
+  try {
+    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products/${productId}.json?fields=id,title,handle,images`, {
+      headers: { 'X-Shopify-Access-Token': SHOPIFY_API },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return data.product;
+  } catch (e) { return null; }
+}
+async function updateProductImageAlt(productId, imageId, alt) {
+  try {
+    const payload = { image: { id: imageId, alt: sanitizeMetaField(alt, 120) } };
+    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products/${productId}/images/${imageId}.json`, {
+      method: 'PUT',
+      headers: { 'X-Shopify-Access-Token': SHOPIFY_API, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) { const t = await res.text(); console.warn('Update image alt failed:', res.status, t.substring(0,120)); }
+  } catch (e) { console.warn('Update image alt error:', e.message); }
+}
+async function ensureProductImageAlts(product) {
+  try {
+    const images = product?.images || [];
+    const baseAlt = sanitizeMetaField(`${product.title}`, 100);
+    for (let i = 0; i < Math.min(images.length, 5); i++) {
+      const img = images[i];
+      const currentAlt = (img.alt || '').trim();
+      if (!currentAlt) {
+        await updateProductImageAlt(product.id, img.id, baseAlt);
+      }
+    }
+  } catch {}
+}
+
+// === Sitemap ping ===
+const SITEMAP_URL = process.env.SITEMAP_URL || 'https://www.sofipex.ro/sitemap.xml';
+async function pingSearchEngines() {
+  try { await fetch(`https://www.google.com/ping?sitemap=${encodeURIComponent(SITEMAP_URL)}`); } catch {}
+  try { await fetch(`https://www.bing.com/ping?sitemap=${encodeURIComponent(SITEMAP_URL)}`); } catch {}
+}
+
 // === App State (persisted in Google Sheets 'State' tab, with in-memory fallback) ===
 async function getStateValue(key) {
   try {
@@ -651,6 +733,9 @@ async function runSEOAutomation() {
     const blogProduct = await chooseNextProductForBlog(productsAll);
     const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
     const imageUrl = blogProduct?.image?.src || blogProduct?.images?.[0]?.src || undefined;
+    // Inject JSON-LD Article + Breadcrumb into body_html
+    const jsonLd = buildArticleJsonLd({ title: article.title, description: article.meta_description || article.title, imageUrl });
+    article.content_html = `${jsonLd}\n${article.content_html}`;
     articleHandle = await createShopifyArticle(article, imageUrl);
       await addBlogPublishedProductId(blogProduct.id);
     }
@@ -695,6 +780,10 @@ async function runSEOAutomation() {
     let newBodyHtml = oldDescriptionClean;
     try {
         newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords));
+        const productFull = await fetchProductById(targetProduct.id);
+        const imageUrl = productFull?.images?.[0]?.src || undefined;
+        const jsonLd = buildProductJsonLd({ title: targetProduct.title, description: newBodyHtml, imageUrl });
+        newBodyHtml = jsonLd + newBodyHtml;
     } catch (e) {
         console.error("🔴 ESEC FINAL: On-Page patch nu a putut fi generat.");
     }
@@ -736,7 +825,13 @@ async function runSEOAutomation() {
     const oldDescriptionClean = targetProduct.body_html || '';
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
-    try { newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords)); } catch {}
+    try { 
+      newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords));
+      const productFull = await fetchProductById(targetProduct.id);
+      const imageUrl = productFull?.images?.[0]?.src || undefined;
+      const jsonLd = buildProductJsonLd({ title: targetProduct.title, description: newBodyHtml, imageUrl });
+      newBodyHtml = jsonLd + newBodyHtml;
+    } catch {}
     const metaTitleCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '', 60);
     const metaDescCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || oldDescriptionClean || targetProduct.title || '', 160);
     proposedOptimization = {
@@ -970,6 +1065,8 @@ app.post("/generate-blog-now", async (req, res) => {
         const blogProduct = await chooseNextProductForBlog(productsAll);
         const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
         const imageUrl = blogProduct?.image?.src || blogProduct?.images?.[0]?.src || undefined;
+        const jsonLd = buildArticleJsonLd({ title: article.title, description: article.meta_description || article.title, imageUrl });
+        article.content_html = `${jsonLd}\n${article.content_html}`;
         const handle = await createShopifyArticle(article, imageUrl);
         await addBlogPublishedProductId(blogProduct.id);
         if (handle) {
