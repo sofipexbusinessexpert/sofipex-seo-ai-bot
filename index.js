@@ -229,6 +229,31 @@ async function setStateValue(key, value) {
   }
 }
 
+// === Persist/restore proposed on-page optimization ===
+async function persistProposedOptimization() {
+  try {
+    const payload = proposedOptimization ? JSON.stringify(proposedOptimization) : '';
+    await setStateValue('proposed_optimization_json', payload);
+  } catch (e) {
+    console.error('Persist proposedOptimization failed:', e.message);
+  }
+}
+async function loadProposedOptimizationFromState() {
+  try {
+    const raw = await getStateValue('proposed_optimization_json');
+    if (raw && String(raw).trim().length > 2) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.productId) {
+        proposedOptimization = parsed;
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.error('Load proposedOptimization failed:', e.message);
+  }
+  return null;
+}
+
 async function getOptimizedProductIds() {
   const raw = await getStateValue("optimized_product_ids");
   if (!raw) return new Set();
@@ -607,7 +632,8 @@ async function runSEOAutomation() {
   await ensureHeaders("Analytics", ["Data", "Page Path", "Active Users", "Sessions"]);
   await ensureHeaders("State", ["Key", "Value"]);
 
-  proposedOptimization = null;
+  // Restaurează propunerea on-page neaprobată, dacă există
+  await loadProposedOptimizationFromState();
 
   const [gsc, gaData, products, trends, recentTrends] = await Promise.all([
     runWithRetry(fetchGSCData), fetchGIData(), getProducts(), fetchGoogleTrends(), getRecentTrends()
@@ -690,6 +716,7 @@ async function runSEOAutomation() {
         currentMetaTitle: metaTitleCurrent,
         currentMetaDescription: metaDescCurrent
     };
+    await persistProposedOptimization();
     console.log(`🔄 Propunere On-Page generată și stocată pentru ${targetProduct.title}. Așteaptă aprobare.`);
 
   } else if (products.length > 0) {
@@ -725,6 +752,7 @@ async function runSEOAutomation() {
       currentMetaTitle: metaTitleCurrent,
       currentMetaDescription: metaDescCurrent
     };
+    await persistProposedOptimization();
   } else {
     console.log("⚠️ No eligible products, skip optimizare");
   }
@@ -781,6 +809,7 @@ app.post("/approve-optimization", async (req, res) => {
         
         if (success) {
             proposedOptimization = null;
+            await persistProposedOptimization();
             await prepareNextOnPageProposal();
             return res.redirect(303, "/dashboard");
         } else {
@@ -839,6 +868,7 @@ app.post("/regenerate-optimization", async (req, res) => {
           currentMetaTitle: metaTitleCurrent,
           currentMetaDescription: metaDescCurrent
         };
+        await persistProposedOptimization();
         return res.redirect(303, "/dashboard");
     } catch (e) {
         res.status(500).send("Eroare: " + e.message);
