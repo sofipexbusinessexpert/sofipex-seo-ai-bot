@@ -938,6 +938,7 @@ async function applyProposedOptimization(proposal) {
 
 app.get("/", (req, res) => res.send("✅ TheMastreM SEO AI v7.7 rulează!"));
 app.get("/dashboard", async (req, res) => res.send(await dashboardHTML()));
+app.get("/healthz", (req, res) => res.json({ ok: true, hasPendingOnPage: Boolean(proposedOptimization) }));
 app.get("/diagnostics", async (req, res) => {
   try {
     const key = req.query.key;
