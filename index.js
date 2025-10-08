@@ -614,14 +614,17 @@ async function runSEOAutomation() {
   ]);
   const gscKeywords = gsc;
   
-  // Pas 1: Articol de blog bazat pe produsul următor (nu pe trend)
+  // Pas 1: Articol de blog bazat pe produsul următor (nu pe trend), controlat de flag
   let articleHandle = null;
   try {
-    const productsAll = await getProducts();
-    const blogProduct = await chooseNextProductForBlog(productsAll);
-    const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
-    articleHandle = await createShopifyArticle(article);
-    await addBlogPublishedProductId(blogProduct.id);
+    const blogFlag = (await getStateValue('enable_daily_product_blog')) === '1';
+    if (blogFlag) {
+      const productsAll = await getProducts();
+      const blogProduct = await chooseNextProductForBlog(productsAll);
+      const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
+      articleHandle = await createShopifyArticle(article);
+      await addBlogPublishedProductId(blogProduct.id);
+    }
   } catch (e) {
     console.error("🔴 Blog generate error:", e.message);
   }
@@ -631,7 +634,9 @@ async function runSEOAutomation() {
   const dateStr = new Date().toLocaleString("ro-RO");
   scores.forEach(s => saveToSheets("Scoruri", [dateStr, s.keyword, s.score]));
   gaData.forEach(g => saveToSheets("Analytics", [dateStr, g.pagePath, g.activeUsers, g.sessions]));
-  saveToSheets("Trenduri", [dateStr, "Produs: Articol generat", articleHandle ? `Draft: ${articleHandle}` : "Eroare"]);
+  if (articleHandle) {
+    saveToSheets("Trenduri", [dateStr, "Produs: Articol generat", `Draft: ${articleHandle}`]);
+  }
 
   lastRunData = { trends: [], scores, gaData };
 
@@ -753,7 +758,7 @@ async function applyProposedOptimization(proposal) {
 }
 
 app.get("/", (req, res) => res.send("✅ TheMastreM SEO AI v7.7 rulează!"));
-app.get("/dashboard", (req, res) => res.send(dashboardHTML()));
+app.get("/dashboard", async (req, res) => res.send(await dashboardHTML()));
 
 app.post("/approve-optimization", async (req, res) => {
     try {
@@ -911,6 +916,18 @@ app.get("/run-now", async (req, res) => {
     }
 });
 
+app.post("/toggle-daily-product-blog", async (req, res) => {
+    try {
+        const key = req.body.key;
+        if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden");
+        const enabled = req.body.enabled === '1' ? '1' : '0';
+        await setStateValue('enable_daily_product_blog', enabled);
+        return res.redirect(303, '/dashboard');
+    } catch (e) {
+        res.status(500).send("Eroare: " + e.message);
+    }
+});
+
 app.post("/approve", async (req, res) => {
     return res.redirect(307, '/approve-optimization'); 
 });
@@ -927,7 +944,7 @@ app.listen(process.env.PORT || 3000, () => {
 });
 
 /* === 📊 Dashboard HTML (Funcții Auxiliare) === */
-function dashboardHTML() {
+async function dashboardHTML() {
     const trendsList = lastRunData.trends.map(t => `<li>${t.trend} – scor ${t.score}</li>`).join("") || "<li>Niciun trend recent</li>";
     const scoresTable = lastRunData.scores.length > 0 ? `<table border="1"><tr><th>Keyword</th><th>Score</th></tr>${lastRunData.scores.map(s => `<tr><td>${s.keyword}</td><td>${s.score}</td></tr>`).join('')}</table>` : "<p>Niciun scor recent</p>";
     const gaTable = lastRunData.gaData.length > 0 ? `<table border="1"><tr><th>Page</th><th>Users</th><th>Sessions</th></tr>${lastRunData.gaData.slice(0,5).map(g => `<tr><td>${g.pagePath}</td><td>${g.activeUsers}</td><td>${g.sessions}</td></tr>`).join('')}</table>` : "<p>No GA data</p>";
@@ -943,6 +960,7 @@ function dashboardHTML() {
         </div>
     ` : '';
 
+    const blogFlag = (await getStateValue('enable_daily_product_blog')) === '1';
     const approvalSection = proposedOptimization ? `
         <hr>
         <h2>⚠️ Propunere On-Page (Aprobare Manuală)</h2>
@@ -983,6 +1001,19 @@ function dashboardHTML() {
         ${serpPreview}
     ` : '<h2>✅ Niciună modificare On-Page în așteptare de aprobare.</h2><form method="GET" action="/propose-next"><input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}"><button type="submit" style="padding:8px 14px;">🔄 Generează următoarea propunere</button></form>';
 
+    const blogControls = `
+      <hr>
+      <h2>📰 Blog</h2>
+      <form method="POST" action="/toggle-daily-product-blog">
+        <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
+        <label style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" name="enabled" value="1" ${blogFlag ? 'checked' : ''}>
+          Activează generarea zilnică de articole pe produs
+        </label>
+        <button type="submit" style="padding:8px 14px; margin-top:8px;">💾 Salvează</button>
+      </form>
+    `;
+
     return `
     <html><head>
     <title>TheMastreM SEO AI Dashboard</title>
@@ -991,6 +1022,7 @@ function dashboardHTML() {
     </head><body style="font-family:Arial;padding:30px;">
     <h1>📊 TheMastreM SEO AI v7.7 Dashboard</h1>
     ${approvalSection}
+    ${blogControls}
     <hr>
     <h2>Trenduri & Analiză</h2>
     <p>Timp Uman Economisit Rulare Curentă: <b>${calculateTimeSavings()} ore</b></p>
