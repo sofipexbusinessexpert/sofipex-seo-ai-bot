@@ -652,7 +652,7 @@ async function createShopifyArticle(article, productImageUrl) {
         .split(',')
         .map(s => s.trim())
         .filter(Boolean)
-        .slice(0, 5)
+        .slice(0, 8)
         .join(', ');
       tagsString = fallback || 'produs';
     }
@@ -817,7 +817,8 @@ Cerințe:
 - Include o listă cu 4-6 beneficii concrete și un FAQ cu 3-5 întrebări
 - Integrează cuvinte-cheie derivate din titlu/specificații în mod natural (fără stuffing)
 - Adaugă meta title (<=60) și meta description (<=160) persuasive
-Returnează JSON EXACT: {"title": "...", "meta_title": "...", "meta_description": "...", "tags": ["produs"], "content_html": "<h1>...</h1>"}`;
+- Returnează câmpul tags ca o listă de 4-8 etichete relevante extrase din denumire/specificații (ex: material, dimensiune, categorie), fără diacritice, fără simboluri
+Returnează JSON EXACT: {"title": "...", "meta_title": "...", "meta_description": "...", "tags": ["..."], "content_html": "<h1>...</h1>"}`;
   try {
     const r = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.7, max_tokens: 2000, });
     const content = r.choices[0].message.content.replace(/```json|```/g, "").trim();
