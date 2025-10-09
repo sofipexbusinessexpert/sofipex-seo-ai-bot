@@ -829,9 +829,27 @@ Reguli:
 Returnează DOAR BLOCUL NOU ca HTML valid (începe cu <p>... descriere ...</p>): {"new_content_html": "<p>...</p><h2>Specificatii tehnice</h2><ul>...</ul><h2>Utilizari recomandate</h2><ul>...</ul><h2>Produse similare</h2><ul></ul><h2>Intrebari frecvente</h2><dl>...</dl>"}. JSON STRICT.`;
   try {
     const r = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.5, max_tokens: 3000, });
-    const parsed = JSON.parse(r.choices[0].message.content.replace(/```json|```/g, "").trim());
-    const newBodyHtml = parsed.new_content_html;
-    return newBodyHtml;
+    let raw = r.choices[0].message.content || '';
+    raw = raw.replace(/```json|```/g, "").trim();
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e1) {
+      const start = raw.indexOf('{');
+      const end = raw.lastIndexOf('}');
+      if (start !== -1 && end !== -1 && end > start) {
+        const candidate = raw.slice(start, end + 1);
+        try { parsed = JSON.parse(candidate); } catch (e2) { /* ignore */ }
+      }
+    }
+    if (parsed && parsed.new_content_html) {
+      return parsed.new_content_html;
+    }
+    // Fallback: if the model returned HTML instead of JSON, use it directly
+    if (/<(p|h2|ul|dl|li|dt|dd)[^>]*>/i.test(raw)) {
+      return raw;
+    }
+    throw new Error('LLM returned invalid JSON and no usable HTML');
   } catch (e) { 
     console.error(`❌ EROARE CRITICĂ GPT: ${e.message.substring(0, 150)}`);
     throw e; 
@@ -950,9 +968,12 @@ async function runSEOAutomation() {
         const productFull = await fetchProductById(targetProduct.id);
         const imageUrl = productFull?.images?.[0]?.src || undefined;
         const jsonLd = buildProductJsonLd({ title: targetProduct.title, description: newBodyHtml, imageUrl, price: targetProduct?.variants?.[0]?.price, url: `${BASE_SITE_URL}/products/${targetProduct.handle}` });
-        const allProducts = await getProducts();
-        const similar = buildSimilarProductsList(targetProduct, allProducts, 5);
-        newBodyHtml = injectSimilarProductsList(jsonLd + newBodyHtml, similar);
+    const allProducts = await getProducts();
+    const similar = buildSimilarProductsList(targetProduct, allProducts, 5);
+    newBodyHtml = injectSimilarProductsList(jsonLd + newBodyHtml, similar);
+    if (!/produse\s+similare[\s\S]*<ul>/i.test(newBodyHtml) && similar) {
+      newBodyHtml += `\n<h2>Produse similare</h2>${similar}`;
+    }
     } catch (e) {
         console.error("🔴 ESEC FINAL: On-Page patch nu a putut fi generat.");
     }
@@ -1003,6 +1024,9 @@ async function runSEOAutomation() {
       const allProducts = await getProducts();
       const similar = buildSimilarProductsList(targetProduct, allProducts, 5);
       newBodyHtml = injectSimilarProductsList(jsonLd + newBodyHtml, similar);
+      if (!/produse\s+similare[\s\S]*<ul>/i.test(newBodyHtml) && similar) {
+        newBodyHtml += `\n<h2>Produse similare</h2>${similar}`;
+      }
     } catch {}
     const metaTitleCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '', 60);
     const metaDescCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || oldDescriptionClean || targetProduct.title || '', 160);
