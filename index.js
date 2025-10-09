@@ -403,6 +403,29 @@ async function getConfigDiagnostics() {
   };
 }
 
+// === Rate limit (simple, in-memory) ===
+function createRateLimiter({ windowMs = 60000, max = 10 } = {}) {
+  const hits = new Map();
+  return function rateLimit(req, res, next) {
+    const now = Date.now();
+    const key = req.body?.key || req.ip;
+    const entry = hits.get(key) || { count: 0, start: now };
+    if (now - entry.start > windowMs) {
+      entry.count = 0;
+      entry.start = now;
+    }
+    entry.count += 1;
+    hits.set(key, entry);
+    if (entry.count > max) {
+      return res.status(429).send('Too Many Requests');
+    }
+    next();
+  };
+}
+
+const rlStrict = createRateLimiter({ windowMs: 60000, max: 5 });
+const rlMedium = createRateLimiter({ windowMs: 60000, max: 12 });
+
 // === App State (persisted in Google Sheets 'State' tab, with in-memory fallback) ===
 async function getStateValue(key) {
   try {
@@ -1174,7 +1197,7 @@ app.get("/diagnostics", async (req, res) => {
   }
 });
 
-app.post("/approve-optimization", async (req, res) => {
+app.post("/approve-optimization", rlStrict, async (req, res) => {
     try {
         const { key, password } = req.body;
         if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
@@ -1206,7 +1229,7 @@ app.post("/approve-optimization", async (req, res) => {
     }
 });
 
-app.post("/reject-optimization", async (req, res) => {
+app.post("/reject-optimization", rlMedium, async (req, res) => {
     try {
         const key = req.body.key;
         if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
@@ -1222,7 +1245,7 @@ app.post("/reject-optimization", async (req, res) => {
     }
 });
 
-app.post("/regenerate-optimization", async (req, res) => {
+app.post("/regenerate-optimization", rlMedium, async (req, res) => {
     try {
         const key = req.body.key;
         if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
@@ -1261,7 +1284,7 @@ app.post("/regenerate-optimization", async (req, res) => {
     }
 });
 
-app.post("/regenerate-meta-only", async (req, res) => {
+app.post("/regenerate-meta-only", rlMedium, async (req, res) => {
     try {
         const key = req.body.key;
         if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
@@ -1278,7 +1301,7 @@ app.post("/regenerate-meta-only", async (req, res) => {
     }
 });
 
-app.post("/regenerate-description-only", async (req, res) => {
+app.post("/regenerate-description-only", rlMedium, async (req, res) => {
     try {
         const key = req.body.key;
         if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
@@ -1296,7 +1319,7 @@ app.post("/regenerate-description-only", async (req, res) => {
         res.status(500).send("Eroare: " + e.message);
     }
 });
-app.post("/unblacklist", async (req, res) => {
+app.post("/unblacklist", rlMedium, async (req, res) => {
     try {
         const key = req.body.key;
         if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden: Invalid Secret Key");
@@ -1344,7 +1367,7 @@ app.post("/toggle-daily-product-blog", async (req, res) => {
     }
 });
 
-app.post("/generate-blog-now", async (req, res) => {
+app.post("/generate-blog-now", rlMedium, async (req, res) => {
     try {
         const key = req.body.key;
         if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden");
