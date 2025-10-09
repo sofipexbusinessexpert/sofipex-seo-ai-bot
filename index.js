@@ -852,7 +852,17 @@ Returnează DOAR BLOCUL NOU ca HTML valid (începe cu <p>... descriere ...</p>):
     throw new Error('LLM returned invalid JSON and no usable HTML');
   } catch (e) { 
     console.error(`❌ EROARE CRITICĂ GPT: ${e.message.substring(0, 150)}`);
-    throw e; 
+    // Fallback: build minimal structured HTML from hints
+    const specs = [];
+    (String(specHints).split('\n')||[]).forEach(line => { if (/:/.test(line)) specs.push(`<li>${line.trim()}</li>`); });
+    const specsHtml = specs.length > 0 ? specs.join('') : '';
+    const usesHtml = '';
+    const html = `<p>${sanitizeMetaField(title, 160)} — descriere scurtă indisponibilă temporar.</p>`
+      + `<h2>Specificatii tehnice</h2><ul>${specsHtml}</ul>`
+      + `<h2>Utilizari recomandate</h2><ul>${usesHtml}</ul>`
+      + `<h2>Produse similare</h2><ul></ul>`
+      + `<h2>Intrebari frecvente</h2><dl></dl>`;
+    return html; 
   }
 }
 async function generateBlogArticleFromProduct(product) { 
