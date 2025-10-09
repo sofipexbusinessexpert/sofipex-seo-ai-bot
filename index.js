@@ -14,6 +14,7 @@ import OpenAI from "openai";
 import cron from "node-cron";
 import sgMail from "@sendgrid/mail";
 import 'dotenv/config';
+import { normalizeGeneratedHtml, stripLdJsonScripts, removeNaSpecItems, removeSimilarSection, buildSimilarProductsList } from './lib/html.js';
 
 /* === 🔐 Variabile === */
 const {
@@ -265,27 +266,7 @@ function removeSimilarSection(html) {
   } catch { return String(html || ''); }
 }
 
-// === JSON-LD builders ===
-function buildProductJsonLd({ title, description, imageUrl, brand = 'Sofipex', price, currency = 'RON', availability = 'https://schema.org/InStock', url }) {
-  const json = {
-    '@context': 'https://schema.org',
-    '@type': 'Product',
-    name: sanitizeMetaField(title || '', 120),
-    description: sanitizeMetaField(stripHtmlAndWhitespace(description || ''), 5000),
-    brand: { '@type': 'Brand', name: brand },
-  };
-  if (imageUrl) json.image = [imageUrl];
-  if (price) {
-    json.offers = {
-      '@type': 'Offer',
-      priceCurrency: currency,
-      price: String(price),
-      availability,
-      url: url || BASE_SITE_URL,
-    };
-  }
-  return `<script type="application/ld+json">${JSON.stringify(json)}</script>`;
-}
+// === JSON-LD builders (blog only) ===
 function buildArticleJsonLd({ title, description, imageUrl, author = 'Sofipex' }) {
   const now = new Date().toISOString();
   const json = {
