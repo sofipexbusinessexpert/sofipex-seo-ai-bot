@@ -220,6 +220,15 @@ function normalizeGeneratedHtml(input) {
   } catch { return String(input || ''); }
 }
 
+function removeSimilarSection(html) {
+  try {
+    let s = String(html || '');
+    // remove existing 'Produse similare' section (H2 and following UL if present)
+    s = s.replace(/<h2[^>]*>\s*produse\s+similare\s*<\/h2>\s*(<ul[\s\S]*?<\/ul>)?/i, '');
+    return s;
+  } catch { return String(html || ''); }
+}
+
 // === JSON-LD builders ===
 function buildProductJsonLd({ title, description, imageUrl, brand = 'Sofipex', price, currency = 'RON', availability = 'https://schema.org/InStock', url }) {
   const json = {
@@ -537,12 +546,12 @@ async function prepareNextOnPageProposal() {
 
     const dateStr = new Date().toLocaleString("ro-RO");
     const metaTitleCurrent = String(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '');
-    const metaDescCurrent = String(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || '' || targetProduct.title || '');
+    const metaDescCurrent = String(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || targetProduct.body_html || '');
 
     proposedOptimization = {
       productId: targetProduct.id,
       productTitle: targetProduct.title,
-      oldDescription: oldDescriptionClean,
+        oldDescription: oldDescriptionOriginal,
       newDescription: newBodyHtml,
       keyword: targetKeyword.keyword,
       timestamp: dateStr,
@@ -993,13 +1002,12 @@ async function runSEOAutomation() {
         // extrage indicii din vechiul text pentru Dimensiuni/Capacitate/Material/Utilizare
         const specHints = extractSpecHints(targetProduct.body_html || '');
         newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords, specHints));
-        newBodyHtml = stripLdJsonScripts(newBodyHtml);
+    newBodyHtml = stripLdJsonScripts(newBodyHtml);
     const allProducts = await getProducts();
     const similar = buildSimilarProductsList(targetProduct, allProducts, 3);
-        newBodyHtml = injectSimilarProductsList(newBodyHtml, similar);
-    if (!/produse\s+similare[\s\S]*<ul>/i.test(newBodyHtml) && similar) {
-      newBodyHtml += `\n<h2>Produse similare</h2>${similar}`;
-    }
+    // Always replace or add a clean 'Produse similare' section
+    newBodyHtml = removeSimilarSection(newBodyHtml);
+    newBodyHtml += `\n<h2>Produse similare</h2>${similar || '<ul></ul>'}`;
     } catch (e) {
         console.error("🔴 ESEC FINAL: On-Page patch nu a putut fi generat.");
     }
@@ -1048,10 +1056,8 @@ async function runSEOAutomation() {
       newBodyHtml = stripLdJsonScripts(newBodyHtml);
       const allProducts = await getProducts();
       const similar = buildSimilarProductsList(targetProduct, allProducts, 3);
-      newBodyHtml = injectSimilarProductsList(newBodyHtml, similar);
-      if (!/produse\s+similare[\s\S]*<ul>/i.test(newBodyHtml) && similar) {
-        newBodyHtml += `\n<h2>Produse similare</h2>${similar}`;
-      }
+      newBodyHtml = removeSimilarSection(newBodyHtml);
+      newBodyHtml += `\n<h2>Produse similare</h2>${similar || '<ul></ul>'}`;
     } catch {}
     const metaTitleCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '', 60);
     const metaDescCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || oldDescriptionClean || targetProduct.title || '', 160);
