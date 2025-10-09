@@ -190,6 +190,14 @@ function wrapAiBlock(blockHtml) {
   return `${AI_BLOCK_START}\n${String(blockHtml || '').trim()}\n${AI_BLOCK_END}\n`;
 }
 
+function stripLdJsonScripts(html) {
+  try {
+    return String(html || '').replace(/<script[^>]*type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi, '');
+  } catch {
+    return html;
+  }
+}
+
 // === JSON-LD builders ===
 function buildProductJsonLd({ title, description, imageUrl, brand = 'Sofipex', price, currency = 'RON', availability = 'https://schema.org/InStock', url }) {
   const json = {
@@ -957,6 +965,7 @@ async function runSEOAutomation() {
         // extrage indicii din vechiul text pentru Dimensiuni/Capacitate/Material/Utilizare
         const specHints = extractSpecHints(targetProduct.body_html || '');
         newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords, specHints));
+        newBodyHtml = stripLdJsonScripts(newBodyHtml);
         const allProducts = await getProducts();
     const similar = buildSimilarProductsList(targetProduct, allProducts, 5);
         newBodyHtml = injectSimilarProductsList(newBodyHtml, similar);
@@ -1008,6 +1017,7 @@ async function runSEOAutomation() {
     try { 
       const specHints = extractSpecHints(targetProduct.body_html || '');
       newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords, specHints));
+      newBodyHtml = stripLdJsonScripts(newBodyHtml);
       const allProducts = await getProducts();
       const similar = buildSimilarProductsList(targetProduct, allProducts, 5);
       newBodyHtml = injectSimilarProductsList(newBodyHtml, similar);
