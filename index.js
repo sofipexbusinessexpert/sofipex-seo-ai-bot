@@ -958,6 +958,7 @@ async function runSEOAutomation() {
     } catch {}
 
     // B. Generează și Stochează Propunerea Descriere (On-Page)
+    const oldDescriptionOriginal = stripAiBlock(targetProduct.body_html || '');
     const oldDescriptionClean = ''; // suprascrie complet (nu păstra text vechi)
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
