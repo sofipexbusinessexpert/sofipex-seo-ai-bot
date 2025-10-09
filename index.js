@@ -575,18 +575,25 @@ function buildSimilarProductsList(currentProduct, allProducts, maxItems = 5) {
 function injectSimilarProductsList(html, similarUlHtml) {
   if (!similarUlHtml) return html;
   try {
-    const markerIndex = html.toLowerCase().indexOf('produse similare');
-    if (markerIndex === -1) return html + `\n<h2>Produse similare</h2>${similarUlHtml}`;
-    // Replace first <ul> after marker
-    const after = html.slice(markerIndex);
-    const ulStart = after.indexOf('<ul');
-    if (ulStart === -1) {
-      return html + `\n${similarUlHtml}`;
+    const lower = html.toLowerCase();
+    const h2Pattern = /<h2[^>]*>\s*produse\s+similare\s*<\/h2>/i;
+    const h2Match = lower.match(/<h2[^>]*>\s*produse\s+similare\s*<\/h2>/i);
+    if (!h2Match) {
+      return html + `\n<h2>Produse similare</h2>${similarUlHtml}`;
     }
-    const absUlStart = markerIndex + ulStart;
-    const ulEnd = html.indexOf('</ul>', absUlStart);
-    if (ulEnd === -1) return html + `\n${similarUlHtml}`;
-    return html.slice(0, absUlStart) + similarUlHtml + html.slice(ulEnd + 5);
+    const h2Index = lower.indexOf(h2Match[0]);
+    // find first <ul> after the end of this h2
+    const afterH2Index = h2Index + h2Match[0].length;
+    const ulIndex = lower.indexOf('<ul', afterH2Index);
+    if (ulIndex === -1) {
+      // insert our UL right after the H2
+      return html.slice(0, afterH2Index) + `\n${similarUlHtml}` + html.slice(afterH2Index);
+    }
+    const ulCloseIndex = lower.indexOf('</ul>', ulIndex);
+    if (ulCloseIndex === -1) {
+      return html.slice(0, ulIndex) + similarUlHtml + html.slice(ulIndex);
+    }
+    return html.slice(0, ulIndex) + similarUlHtml + html.slice(ulCloseIndex + 5);
   } catch {
     return html;
   }
