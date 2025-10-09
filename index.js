@@ -829,49 +829,19 @@ Reguli:
 - Nu amesteca în text capacități/variante; detaliile rămân ale produsului curent.
 Returnează DOAR BLOCUL NOU ca HTML valid (începe cu <p>... descriere ...</p>): {"new_content_html": "<p>...</p><h2>Specificatii tehnice</h2><ul>...</ul><h2>Utilizari recomandate</h2><ul>...</ul><h2>Produse similare</h2><ul></ul><h2>Intrebari frecvente</h2><dl>...</dl>"}. JSON STRICT.`;
   try {
-    // Try JSON mode for robust parsing
     const r = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      response_format: { type: 'json_object' },
-      messages: [{ role: "user", content: prompt }],
+      model: "gpt-4o",
+      messages: [{ role: "user", content: `${prompt}\n\nReturnează DOAR BLOCUL HTML cerut (fără alte explicații).` }],
       temperature: 0.3,
-      max_tokens: 2500,
+      max_tokens: 2200,
     });
-    let raw = r.choices[0].message.content || '';
-    raw = raw.replace(/```json|```/g, "").trim();
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e1) {
-      const start = raw.indexOf('{');
-      const end = raw.lastIndexOf('}');
-      if (start !== -1 && end !== -1 && end > start) {
-        const candidate = raw.slice(start, end + 1);
-        try { parsed = JSON.parse(candidate); } catch (e2) { /* ignore */ }
-      }
-    }
-    if (parsed && parsed.new_content_html) {
-      return parsed.new_content_html;
-    }
-    // Fallback: if the model returned HTML instead of JSON, use it directly
-    if (/<(p|h2|ul|dl|li|dt|dd)[^>]*>/i.test(raw)) {
+    let raw = (r.choices[0].message.content || '').replace(/```[a-z]*|```/g, '').trim();
+    if (/(<p|<h2|<ul|<dl|<li|<dt|<dd)/i.test(raw)) {
       return raw;
     }
-    // Second attempt: request raw HTML only
-    const altPrompt = `Returnează DOAR blocul HTML conform structurii cerute, fără niciun text explicativ. Structura: <p>descriere</p><h2>Specificatii tehnice</h2><ul>...</ul><h2>Utilizari recomandate</h2><ul>...</ul><h2>Produse similare</h2><ul></ul><h2>Intrebari frecvente</h2><dl>...</dl>.`;
-    const r2 = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: `${prompt}\n\n${altPrompt}` }],
-      temperature: 0.3,
-      max_tokens: 2500,
-    });
-    const raw2 = (r2.choices[0].message.content || '').replace(/```html|```/g, '').trim();
-    if (/(<p|<h2|<ul|<dl)/i.test(raw2)) {
-      return raw2;
-    }
-    throw new Error('LLM returned invalid JSON and no usable HTML');
+    throw new Error('LLM did not return HTML');
   } catch (e) { 
-    console.error(`❌ EROARE CRITICĂ GPT: ${e.message.substring(0, 150)}`);
+    console.error(`❌ EROARE GPT ON-PAGE: ${e.message.substring(0, 150)}`);
     // Fallback: build minimal structured HTML from hints
     const specs = [];
     (String(specHints).split('\n')||[]).forEach(line => { if (/:/.test(line)) specs.push(`<li>${line.trim()}</li>`); });
