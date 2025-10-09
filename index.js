@@ -907,8 +907,7 @@ async function runSEOAutomation() {
     const blogProduct = await chooseNextProductForBlog(productsAll);
     const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
     const imageUrl = blogProduct?.image?.src || blogProduct?.images?.[0]?.src || undefined;
-    // Inject JSON-LD Article + Breadcrumb into body_html
-    const jsonLd = buildArticleJsonLd({ title: article.title, description: article.meta_description || article.title, imageUrl });
+    // Inject only OG/Twitter meta into body_html (schema.org removed)
     const og = `
     <meta property="og:title" content="${sanitizeMetaField(article.meta_title || article.title,60)}" />
     <meta property="og:description" content="${sanitizeMetaField(article.meta_description || article.title,160)}" />
@@ -917,7 +916,7 @@ async function runSEOAutomation() {
     <meta name="twitter:title" content="${sanitizeMetaField(article.meta_title || article.title,60)}" />
     <meta name="twitter:description" content="${sanitizeMetaField(article.meta_description || article.title,160)}" />
     `;
-    article.content_html = `${jsonLd}\n${og}\n${article.content_html}`;
+    article.content_html = `${og}\n${article.content_html}`;
     articleHandle = await createShopifyArticle(article, imageUrl);
     await pingSearchEngines();
       await addBlogPublishedProductId(blogProduct.id);
@@ -1272,7 +1271,6 @@ app.post("/generate-blog-now", async (req, res) => {
         const blogProduct = await chooseNextProductForBlog(productsAll);
         const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
         const imageUrl = blogProduct?.image?.src || blogProduct?.images?.[0]?.src || undefined;
-        const jsonLd = buildArticleJsonLd({ title: article.title, description: article.meta_description || article.title, imageUrl });
         const og = `
         <meta property="og:title" content="${sanitizeMetaField(article.meta_title || article.title,60)}" />
         <meta property="og:description" content="${sanitizeMetaField(article.meta_description || article.title,160)}" />
@@ -1281,7 +1279,7 @@ app.post("/generate-blog-now", async (req, res) => {
         <meta name="twitter:title" content="${sanitizeMetaField(article.meta_title || article.title,60)}" />
         <meta name="twitter:description" content="${sanitizeMetaField(article.meta_description || article.title,160)}" />
         `;
-        article.content_html = `${jsonLd}\n${og}\n${article.content_html}`;
+        article.content_html = `${og}\n${article.content_html}`;
         const handle = await createShopifyArticle(article, imageUrl);
         await addBlogPublishedProductId(blogProduct.id);
         await pingSearchEngines();
