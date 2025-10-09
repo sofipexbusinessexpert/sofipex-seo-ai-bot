@@ -941,6 +941,9 @@ async function runSEOAutomation() {
     // Inject JSON-LD Article + Breadcrumb (OG/Twitter removed per request)
     const jsonLd = buildArticleJsonLd({ title: article.title, description: article.meta_description || article.title, imageUrl });
     article.content_html = `${jsonLd}\n${article.content_html}`;
+    // Append CTA to product page
+    const productUrl = `${BASE_SITE_URL}/products/${blogProduct.handle}`;
+    article.content_html = `${article.content_html}\n<p><a href="${productUrl}">Cumpara articolul aici</a></p>`;
     articleHandle = await createShopifyArticle(article, imageUrl);
     await pingSearchEngines();
       await addBlogPublishedProductId(blogProduct.id);
@@ -1300,6 +1303,8 @@ app.post("/generate-blog-now", async (req, res) => {
         const imageUrl = blogProduct?.image?.src || blogProduct?.images?.[0]?.src || undefined;
         const jsonLd2 = buildArticleJsonLd({ title: article.title, description: article.meta_description || article.title, imageUrl });
         article.content_html = `${jsonLd2}\n${article.content_html}`;
+        const productUrl2 = `${BASE_SITE_URL}/products/${blogProduct.handle}`;
+        article.content_html = `${article.content_html}\n<p><a href="${productUrl2}">Cumpara articolul aici</a></p>`;
         const handle = await createShopifyArticle(article, imageUrl);
         await addBlogPublishedProductId(blogProduct.id);
         await pingSearchEngines();
