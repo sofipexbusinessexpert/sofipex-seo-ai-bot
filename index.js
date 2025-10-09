@@ -494,7 +494,7 @@ async function prepareNextOnPageProposal() {
     const targetKeyword = midScores[0] || scores.find(s => Number(s.score) < 80) || { keyword: KEYWORDS[0] };
 
     const targetProduct = await chooseNextProduct(products);
-    const oldDescriptionClean = stripAiBlock(targetProduct.body_html || '');
+    const oldDescriptionClean = ''; // suprascrie complet (nu păstra text vechi)
     const proposedSeo = await runWithRetry(() => generateSEOContent(targetProduct.title, oldDescriptionClean || ""));
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
@@ -787,27 +787,25 @@ Returnează JSON STRICT: {"meta_title": "...", "meta_description": "..."}`;
 async function generateProductPatch(title, existingBody, titleKeywords) {
   const bodySnippet = (existingBody || '').slice(0, 4000);
   const prompt = `Denumire produs: "${title}". Keywords din titlu (prioritare SEO): "${titleKeywords}".
-Ai mai jos descrierea existentă (HTML) inclusiv posibile specificații tehnice:
+Ai mai jos descrierea existentă (HTML) inclusiv posibile specificații tehnice (pentru context, NU o copia):
 """
 ${bodySnippet}
 """
 Instrucțiuni (STRICT pentru descrierea ON-PAGE a produsului, NU articol de blog):
-1) Introducere: un singur paragraf scurt (max 120-150 cuvinte) orientat pe beneficii (material, capacitate, rezistență, utilizare, eco), natural, fără keyword stuffing.
-2) Beneficii cheie: listă <ul> cu 4–6 <li> concrete și specifice produsului.
-3) Specificații tehnice: listă <ul> cheie–valoare (ex. Dimensiuni, Capacitate, Material, Rezistență, Utilizare), preia valorile din textul existent. Nu inventa. Nu duplica dacă există deja o secțiune clară – atunci doar îmbunătățește-o.
-4) Utilizări recomandate: listă <ul> cu 3–5 contexte practice.
-5) Variante disponibile: listă <ul> goală (placeholder) – sistemul va popula linkuri către celelalte capacități.
-6) Întrebări frecvente (FAQ): listă <dl> cu 3–5 <dt>/<dd> întrebări și răspunsuri scurte, derivate din conținutul existent.
-7) Produse similare: listă <ul> goală (placeholder) – sistemul va popula 3–5 linkuri interne. Nu repeta produsul curent.
+1) Începe direct cu textul descriptiv (1–2 paragrafe scurte, natural, fără keyword stuffing). NU adăuga heading de tip „Introducere”.
+2) Apoi <h2>Specificatii tehnice</h2> cu o listă <ul> cheie–valoare (Dimensiuni, Capacitate, Material, Rezistenta, Utilizare). Preia valori DOAR din textul existent; nu inventa.
+3) Apoi <h2>Utilizari recomandate</h2> cu 3–5 <li> practice.
+4) Apoi <h2>Produse similare</h2> cu o listă <ul></ul> goală (placeholder) – sistemul o va popula cu linkuri interne; nu repeta produsul curent.
+5) Apoi <h2>Intrebari frecvente</h2> cu 3–5 întrebări <dt> și răspunsuri <dd> scurte (derivate din conținut).
 Reguli:
-- Fără H1. Folosește <h2> pentru fiecare secțiune din lista de mai sus, în ordinea dată.
+- Fără H1. Folosește doar <h2> pentru secțiuni după textul descriptiv.
 - Fără repetarea titlului în mod inutil. Corectează diacriticele.
 - Nu amesteca în text capacități/variante; detaliile rămân ale produsului curent.
-Returnează DOAR BLOCUL NOU ca HTML valid (începe cu <h2>Introducere</h2>): {"new_content_html": "<h2>Introducere</h2><p>...</p><h2>Beneficii cheie</h2><ul>...</ul><h2>Specificatii tehnice</h2><ul>...</ul><h2>Utilizari recomandate</h2><ul>...</ul><h2>Variante disponibile</h2><ul></ul><h2>Intrebari frecvente</h2><dl>...</dl><h2>Produse similare</h2><ul></ul>"}. JSON STRICT.`;
+Returnează DOAR BLOCUL NOU ca HTML valid (începe cu <p>... descriere ...</p>): {"new_content_html": "<p>...</p><h2>Specificatii tehnice</h2><ul>...</ul><h2>Utilizari recomandate</h2><ul>...</ul><h2>Produse similare</h2><ul></ul><h2>Intrebari frecvente</h2><dl>...</dl>"}. JSON STRICT.`;
   try {
     const r = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.5, max_tokens: 3000, });
     const parsed = JSON.parse(r.choices[0].message.content.replace(/```json|```/g, "").trim());
-    const newBodyHtml = parsed.new_content_html + (existingBody || '');
+    const newBodyHtml = parsed.new_content_html;
     return newBodyHtml;
   } catch (e) { 
     console.error(`❌ EROARE CRITICĂ GPT: ${e.message.substring(0, 150)}`);
@@ -917,7 +915,7 @@ async function runSEOAutomation() {
     } catch {}
 
     // B. Generează și Stochează Propunerea Descriere (On-Page)
-    const oldDescriptionClean = stripAiBlock(targetProduct.body_html || '');
+    const oldDescriptionClean = ''; // suprascrie complet (nu păstra text vechi)
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
     try {
