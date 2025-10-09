@@ -31,7 +31,8 @@ const {
   APP_URL = process.env.APP_URL || "https://sofipex-seo-ai-bot.onrender.com",
   KEEPALIVE_MINUTES = Number(process.env.KEEPALIVE_MINUTES || 5),
   APPLY_PASSWORD = process.env.APPLY_PASSWORD || "",
-  COOL_DOWN_DAYS = Number(process.env.COOL_DOWN_DAYS || 30)
+  COOL_DOWN_DAYS = Number(process.env.COOL_DOWN_DAYS || 30),
+  BASE_SITE_URL = process.env.BASE_SITE_URL || 'https://www.sofipex.ro'
 } = process.env;
 
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
@@ -190,7 +191,7 @@ function wrapAiBlock(blockHtml) {
 }
 
 // === JSON-LD builders ===
-function buildProductJsonLd({ title, description, imageUrl, brand = 'Sofipex' }) {
+function buildProductJsonLd({ title, description, imageUrl, brand = 'Sofipex', price, currency = 'RON', availability = 'https://schema.org/InStock', url }) {
   const json = {
     '@context': 'https://schema.org',
     '@type': 'Product',
@@ -199,6 +200,15 @@ function buildProductJsonLd({ title, description, imageUrl, brand = 'Sofipex' })
     brand: { '@type': 'Brand', name: brand },
   };
   if (imageUrl) json.image = [imageUrl];
+  if (price) {
+    json.offers = {
+      '@type': 'Offer',
+      priceCurrency: currency,
+      price: String(price),
+      availability,
+      url: url || BASE_SITE_URL,
+    };
+  }
   return `<script type="application/ld+json">${JSON.stringify(json)}</script>`;
 }
 function buildArticleJsonLd({ title, description, imageUrl, author = 'Sofipex' }) {
@@ -728,6 +738,7 @@ Instrucțiuni:
 3) Adaugă o secțiune "Beneficii Cheie" (un <ul> cu 4-5 <li>) cu formulări naturale, incluzând sinonime/variații semantice (LSI) derivate din cuvintele din titlu și din specificații. Evită repetări forțate.
 4) Păstrează restul conținutului existent DUPĂ blocul nou.
 5) Conținutul trebuie să fie în română, să evite superlative generale și să integreze în mod natural cuvintele-cheie extrase din titlu. Evită H1 suplimentar în descriere; folosește <h2> pentru heading.
+ 6) La final, adaugă o secțiune "Produse similare" cu o listă <ul> goală (placeholder) ce va fi completată dinamic de sistem.
 Returnează DOAR BLOCUL NOU (fără descrierea veche) ca HTML valid și compact: {"new_content_html": "<h2>${title}</h2><p>...</p><ul>...</ul>"}. JSON STRICT.`;
   try {
     const r = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.5, max_tokens: 3000, });
@@ -792,7 +803,15 @@ async function runSEOAutomation() {
     const imageUrl = blogProduct?.image?.src || blogProduct?.images?.[0]?.src || undefined;
     // Inject JSON-LD Article + Breadcrumb into body_html
     const jsonLd = buildArticleJsonLd({ title: article.title, description: article.meta_description || article.title, imageUrl });
-    article.content_html = `${jsonLd}\n${article.content_html}`;
+    const og = `
+    <meta property="og:title" content="${sanitizeMetaField(article.meta_title || article.title,60)}" />
+    <meta property="og:description" content="${sanitizeMetaField(article.meta_description || article.title,160)}" />
+    ${imageUrl ? `<meta property=\"og:image\" content=\"${imageUrl}\" />` : ''}
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="${sanitizeMetaField(article.meta_title || article.title,60)}" />
+    <meta name="twitter:description" content="${sanitizeMetaField(article.meta_description || article.title,160)}" />
+    `;
+    article.content_html = `${jsonLd}\n${og}\n${article.content_html}`;
     articleHandle = await createShopifyArticle(article, imageUrl);
     await pingSearchEngines();
       await addBlogPublishedProductId(blogProduct.id);
@@ -840,7 +859,7 @@ async function runSEOAutomation() {
         newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords));
         const productFull = await fetchProductById(targetProduct.id);
         const imageUrl = productFull?.images?.[0]?.src || undefined;
-        const jsonLd = buildProductJsonLd({ title: targetProduct.title, description: newBodyHtml, imageUrl });
+        const jsonLd = buildProductJsonLd({ title: targetProduct.title, description: newBodyHtml, imageUrl, price: targetProduct?.variants?.[0]?.price, url: `${BASE_SITE_URL}/products/${targetProduct.handle}` });
         newBodyHtml = jsonLd + newBodyHtml;
     } catch (e) {
         console.error("🔴 ESEC FINAL: On-Page patch nu a putut fi generat.");
@@ -887,7 +906,7 @@ async function runSEOAutomation() {
       newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords));
       const productFull = await fetchProductById(targetProduct.id);
       const imageUrl = productFull?.images?.[0]?.src || undefined;
-      const jsonLd = buildProductJsonLd({ title: targetProduct.title, description: newBodyHtml, imageUrl });
+      const jsonLd = buildProductJsonLd({ title: targetProduct.title, description: newBodyHtml, imageUrl, price: targetProduct?.variants?.[0]?.price, url: `${BASE_SITE_URL}/products/${targetProduct.handle}` });
       newBodyHtml = jsonLd + newBodyHtml;
     } catch {}
     const metaTitleCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '', 60);
@@ -1140,7 +1159,15 @@ app.post("/generate-blog-now", async (req, res) => {
         const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
         const imageUrl = blogProduct?.image?.src || blogProduct?.images?.[0]?.src || undefined;
         const jsonLd = buildArticleJsonLd({ title: article.title, description: article.meta_description || article.title, imageUrl });
-        article.content_html = `${jsonLd}\n${article.content_html}`;
+        const og = `
+        <meta property="og:title" content="${sanitizeMetaField(article.meta_title || article.title,60)}" />
+        <meta property="og:description" content="${sanitizeMetaField(article.meta_description || article.title,160)}" />
+        ${imageUrl ? `<meta property=\"og:image\" content=\"${imageUrl}\" />` : ''}
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="${sanitizeMetaField(article.meta_title || article.title,60)}" />
+        <meta name="twitter:description" content="${sanitizeMetaField(article.meta_description || article.title,160)}" />
+        `;
+        article.content_html = `${jsonLd}\n${og}\n${article.content_html}`;
         const handle = await createShopifyArticle(article, imageUrl);
         await addBlogPublishedProductId(blogProduct.id);
         await pingSearchEngines();
