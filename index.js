@@ -936,7 +936,7 @@ async function runSEOAutomation() {
     if (blogFlag) {
     const productsAll = await getProducts();
     const blogProduct = await chooseNextProductForBlog(productsAll);
-    const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
+    let article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
     const imageUrl = blogProduct?.image?.src || blogProduct?.images?.[0]?.src || undefined;
     // Inject JSON-LD Article + Breadcrumb (OG/Twitter removed per request)
     const jsonLd = buildArticleJsonLd({ title: article.title, description: article.meta_description || article.title, imageUrl });
@@ -1094,7 +1094,9 @@ async function applyProposedOptimization(proposal) {
         // Ensure meta fields are set/clamped during approval to prevent Shopify from inferring from body
         const safeTitle = sanitizeMetaField(proposal.productTitle || '', 60);
         const safeDesc = sanitizeMetaField(proposal.proposedMetaDescription || proposal.newDescription || proposal.oldDescription || proposal.productTitle || '', 160);
-        const updates = { body_html: wrapAiBlock(proposal.newDescription), meta_title: proposal.proposedMetaTitle || safeTitle, meta_description: safeDesc };
+        // Normalize generated HTML to avoid JSON wrappers and strip any ld+json
+        const cleanHtml = stripLdJsonScripts(normalizeGeneratedHtml(proposal.newDescription));
+        const updates = { body_html: wrapAiBlock(cleanHtml), meta_title: proposal.proposedMetaTitle || safeTitle, meta_description: safeDesc };
         await updateProduct(proposal.productId, updates); 
         await addOptimizedProductId(proposal.productId);
         // Ensure ALT texts and ping sitemap
@@ -1299,7 +1301,7 @@ app.post("/generate-blog-now", async (req, res) => {
         if (!key || key !== DASHBOARD_SECRET_KEY) return res.status(403).send("Forbidden");
         const productsAll = await getProducts();
         const blogProduct = await chooseNextProductForBlog(productsAll);
-        const article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
+        let article = await runWithRetry(() => generateBlogArticleFromProduct(blogProduct));
         const imageUrl = blogProduct?.image?.src || blogProduct?.images?.[0]?.src || undefined;
         const jsonLd2 = buildArticleJsonLd({ title: article.title, description: article.meta_description || article.title, imageUrl });
         article.content_html = `${jsonLd2}\n${article.content_html}`;
