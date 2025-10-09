@@ -961,7 +961,7 @@ async function runSEOAutomation() {
       proposedSeoB.meta_title = alt.meta_title;
       proposedSeoB.meta_description = alt.meta_description;
     } catch {}
-    const oldDescriptionClean = targetProduct.body_html || '';
+    const oldDescriptionClean = stripAiBlock(targetProduct.body_html || '');
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
     try { 
@@ -1282,7 +1282,16 @@ async function dashboardHTML() {
         <hr>
         <h2>⚠️ Propunere On-Page (Aprobare Manuală)</h2>
         <p>Produs: <b>${proposedOptimization.productTitle}</b> (Keyword: ${proposedOptimization.keyword})</p>
-        <textarea style="width:100%; height:150px; font-family:monospace; font-size:12px;" readonly>-- DESCRIERE VECHE (fragment) --\n${proposedOptimization.oldDescription?.substring(0, 500) || 'N/A'}\n\n-- DESCRIERE NOUĂ PROPUSĂ (fragment) --\n${proposedOptimization.newDescription?.substring(0, 500) || 'Eroare generare'}</textarea>
+        <div style="display:flex; gap:12px;">
+          <div style="flex:1;">
+            <label style="font-weight:bold;">Descriere veche (completă)</label>
+            <textarea style="width:100%; height:280px; font-family:monospace; font-size:12px;" readonly>${proposedOptimization.oldDescription || 'N/A'}</textarea>
+          </div>
+          <div style="flex:1;">
+            <label style="font-weight:bold;">Descriere nouă propusă (completă)</label>
+            <textarea style="width:100%; height:280px; font-family:monospace; font-size:12px;" readonly>${proposedOptimization.newDescription || 'Eroare generare'}</textarea>
+          </div>
+        </div>
         <form method="POST" action="/approve-optimization" style="display:inline-block; margin-right:10px;">
             <input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}">
             <input type="password" name="password" placeholder="Parolă aplicare" style="padding:6px; margin-right:8px;" ${APPLY_PASSWORD ? '' : 'disabled placeholder="(fără parolă)"'}>
@@ -1309,11 +1318,21 @@ async function dashboardHTML() {
             <button type="submit" style="padding:10px 20px; background-color:#0ea5e9; color:white; border:none; cursor:pointer; margin-top:10px;">🔄 REGENEREAZĂ PROPUNERE</button>
         </form>
         <div style="margin-top:10px;">
-          <h3>🔎 Meta (Search Engine Listing)</h3>
-          <p><b>Meta Title (curent):</b> ${proposedOptimization.currentMetaTitle || '—'}<br/>
-             <b>Propus:</b> ${proposedOptimization.proposedMetaTitle || '—'}</p>
-          <p><b>Meta Description (curentă):</b> ${proposedOptimization.currentMetaDescription || '—'}<br/>
-             <b>Propusă (≤160):</b> ${proposedOptimization.proposedMetaDescription || '—'}</p>
+          <h3>🔎 Meta (Search Engine Listing) – valori complete</h3>
+          <div style="display:flex; gap:12px;">
+            <div style="flex:1;">
+              <label style="font-weight:bold;">Meta Title (curent)</label>
+              <textarea style="width:100%; height:50px; font-family:monospace; font-size:12px;" readonly>${proposedOptimization.currentMetaTitle || ''}</textarea>
+              <label style="font-weight:bold;">Meta Description (curentă)</label>
+              <textarea style="width:100%; height:90px; font-family:monospace; font-size:12px;" readonly>${proposedOptimization.currentMetaDescription || ''}</textarea>
+            </div>
+            <div style="flex:1;">
+              <label style="font-weight:bold;">Meta Title (propus)</label>
+              <textarea style="width:100%; height:50px; font-family:monospace; font-size:12px;" readonly>${proposedOptimization.proposedMetaTitle || ''}</textarea>
+              <label style="font-weight:bold;">Meta Description (propusă ≤160)</label>
+              <textarea style="width:100%; height:90px; font-family:monospace; font-size:12px;" readonly>${proposedOptimization.proposedMetaDescription || ''}</textarea>
+            </div>
+          </div>
         </div>
         ${serpPreview}
     ` : '<h2>✅ Niciună modificare On-Page în așteptare de aprobare.</h2><form method="GET" action="/propose-next"><input type="hidden" name="key" value="${DASHBOARD_SECRET_KEY}"><button type="submit" style="padding:8px 14px;">🔄 Generează următoarea propunere</button></form>';
