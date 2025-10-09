@@ -41,6 +41,7 @@ const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.set('trust proxy', 1);
 
 let lastRunData = { trends: [], scores: [], gaData: [], selectedTrend: null };
 let proposedOptimization = null;
@@ -155,6 +156,21 @@ async function saveToSheets(tab, values) {
     await sheets.spreadsheets.values.append({ spreadsheetId: GOOGLE_SHEETS_ID, range: `${tab}!A:A`, valueInputOption: "RAW", requestBody: { values: [values] }, });
     console.log(`✅ Sheets ${tab}: Data appended`);
   } catch (err) { console.error(`❌ Sheets ${tab} error:`, err.message); }
+}
+
+async function appendManyToSheets(tab, rows) {
+  try {
+    if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) return;
+    if (!rows || rows.length === 0) return;
+    const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
+    const sheets = google.sheets({ version: "v4", auth });
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: GOOGLE_SHEETS_ID,
+      range: `${tab}!A:A`,
+      valueInputOption: "RAW",
+      requestBody: { values: rows }
+    });
+  } catch (err) { console.error(`❌ Sheets batch append error for ${tab}:`, err.message); }
 }
 
 // === Meta utils: strip HTML and clamp lengths ===
@@ -985,8 +1001,8 @@ async function runSEOAutomation() {
   // Pas 2: Scoruri & Save
   const scores = gscKeywords.filter(s => Number(s.score) >= 10);
   const dateStr = new Date().toLocaleString("ro-RO");
-  scores.forEach(s => saveToSheets("Scoruri", [dateStr, s.keyword, s.score]));
-  gaData.forEach(g => saveToSheets("Analytics", [dateStr, g.pagePath, g.activeUsers, g.sessions]));
+  if (scores.length) await appendManyToSheets("Scoruri", scores.map(s => [dateStr, s.keyword, s.score]));
+  if (gaData.length) await appendManyToSheets("Analytics", gaData.map(g => [dateStr, g.pagePath, g.activeUsers, g.sessions]));
   if (articleHandle) {
     saveToSheets("Trenduri", [dateStr, "Produs: Articol generat", `Draft: ${articleHandle}`]);
   }
