@@ -994,8 +994,8 @@ async function runSEOAutomation() {
         const specHints = extractSpecHints(targetProduct.body_html || '');
         newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords, specHints));
         newBodyHtml = stripLdJsonScripts(newBodyHtml);
-        const allProducts = await getProducts();
-    const similar = buildSimilarProductsList(targetProduct, allProducts, 5);
+    const allProducts = await getProducts();
+    const similar = buildSimilarProductsList(targetProduct, allProducts, 3);
         newBodyHtml = injectSimilarProductsList(newBodyHtml, similar);
     if (!/produse\s+similare[\s\S]*<ul>/i.test(newBodyHtml) && similar) {
       newBodyHtml += `\n<h2>Produse similare</h2>${similar}`;
@@ -1047,7 +1047,7 @@ async function runSEOAutomation() {
       newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords, specHints));
       newBodyHtml = stripLdJsonScripts(newBodyHtml);
       const allProducts = await getProducts();
-      const similar = buildSimilarProductsList(targetProduct, allProducts, 5);
+      const similar = buildSimilarProductsList(targetProduct, allProducts, 3);
       newBodyHtml = injectSimilarProductsList(newBodyHtml, similar);
       if (!/produse\s+similare[\s\S]*<ul>/i.test(newBodyHtml) && similar) {
         newBodyHtml += `\n<h2>Produse similare</h2>${similar}`;
