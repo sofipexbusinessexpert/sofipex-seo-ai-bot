@@ -620,6 +620,22 @@ function buildDefaultFaqPairs(title, bodyText) {
   }
   return pairs;
 }
+
+function extractSpecHints(html) {
+  try {
+    const text = stripHtmlAndWhitespace(html || '');
+    const hints = [];
+    const dimMatch = text.match(/(dimensiuni|dimensiune)\s*[:\-]?\s*([0-9 x×X]{5,}mm|[0-9.,\sx]+cm)/i);
+    if (dimMatch) hints.push(`Dimensiuni: ${dimMatch[2]}`);
+    const capMatch = text.match(/(capacitate)\s*[:\-]?\s*([0-9.,]+\s*cc|[0-9.,]+\s*ml)/i);
+    if (capMatch) hints.push(`Capacitate: ${capMatch[2]}`);
+    const matMatch = text.match(/(material)\s*[:\-]?\s*([a-zA-Zăâîșț\s]+)/i);
+    if (matMatch) hints.push(`Material: ${matMatch[2]}`);
+    const useMatch = text.match(/(utilizare|utilizari|utilizări)\s*[:\-]?\s*([a-zA-Zăâîșț0-9,\s]+)/i);
+    if (useMatch) hints.push(`Utilizare: ${useMatch[2]}`);
+    return hints.join('\n');
+  } catch { return ''; }
+}
 async function updateProduct(id, updates) {
   try {
     if (!updates || (!updates.meta_title && !updates.body_html)) { console.warn("⚠️ Updates lipsă, folosind fallback"); updates = { meta_title: "Fallback Title", meta_description: "Fallback Description SEO Sofipex" }; }
@@ -791,13 +807,15 @@ Returnează JSON STRICT: {"meta_title": "...", "meta_description": "..."}`;
     };
   } catch (e) { return { meta_title: title, meta_description: `Ambalaje eco de calitate de la Sofipex. ${title.substring(0, 100)}.` }; }
 }
-async function generateProductPatch(title, existingBody, titleKeywords) {
+async function generateProductPatch(title, existingBody, titleKeywords, specHints = '') {
   const bodySnippet = (existingBody || '').slice(0, 4000);
   const prompt = `Denumire produs: "${title}". Keywords din titlu (prioritare SEO): "${titleKeywords}".
 Ai mai jos descrierea existentă (HTML) inclusiv posibile specificații tehnice (pentru context, NU o copia):
 """
 ${bodySnippet}
 """
+Indicii extrase din descriere pentru specificații (dacă lipsesc, ignoră):
+${specHints}
 Instrucțiuni (STRICT pentru descrierea ON-PAGE a produsului, NU articol de blog):
 1) Începe direct cu textul descriptiv (1–2 paragrafe scurte, natural, fără keyword stuffing). NU adăuga heading de tip „Introducere”.
 2) Apoi <h2>Specificatii tehnice</h2> cu o listă <ul> cheie–valoare (Dimensiuni, Capacitate, Material, Rezistenta, Utilizare). Preia valori DOAR din textul existent; nu inventa.
@@ -926,7 +944,9 @@ async function runSEOAutomation() {
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
     try {
-        newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords));
+        // extrage indicii din vechiul text pentru Dimensiuni/Capacitate/Material/Utilizare
+        const specHints = extractSpecHints(targetProduct.body_html || '');
+        newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords, specHints));
         const productFull = await fetchProductById(targetProduct.id);
         const imageUrl = productFull?.images?.[0]?.src || undefined;
         const jsonLd = buildProductJsonLd({ title: targetProduct.title, description: newBodyHtml, imageUrl, price: targetProduct?.variants?.[0]?.price, url: `${BASE_SITE_URL}/products/${targetProduct.handle}` });
@@ -975,7 +995,8 @@ async function runSEOAutomation() {
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
     try { 
-      newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords));
+      const specHints = extractSpecHints(targetProduct.body_html || '');
+      newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords, specHints));
       const productFull = await fetchProductById(targetProduct.id);
       const imageUrl = productFull?.images?.[0]?.src || undefined;
       const jsonLd = buildProductJsonLd({ title: targetProduct.title, description: newBodyHtml, imageUrl, price: targetProduct?.variants?.[0]?.price, url: `${BASE_SITE_URL}/products/${targetProduct.handle}` });
