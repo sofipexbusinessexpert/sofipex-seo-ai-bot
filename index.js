@@ -965,12 +965,9 @@ async function runSEOAutomation() {
         // extrage indicii din vechiul text pentru Dimensiuni/Capacitate/Material/Utilizare
         const specHints = extractSpecHints(targetProduct.body_html || '');
         newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords, specHints));
-        const productFull = await fetchProductById(targetProduct.id);
-        const imageUrl = productFull?.images?.[0]?.src || undefined;
-        const jsonLd = buildProductJsonLd({ title: targetProduct.title, description: newBodyHtml, imageUrl, price: targetProduct?.variants?.[0]?.price, url: `${BASE_SITE_URL}/products/${targetProduct.handle}` });
-    const allProducts = await getProducts();
+        const allProducts = await getProducts();
     const similar = buildSimilarProductsList(targetProduct, allProducts, 5);
-    newBodyHtml = injectSimilarProductsList(jsonLd + newBodyHtml, similar);
+        newBodyHtml = injectSimilarProductsList(newBodyHtml, similar);
     if (!/produse\s+similare[\s\S]*<ul>/i.test(newBodyHtml) && similar) {
       newBodyHtml += `\n<h2>Produse similare</h2>${similar}`;
     }
@@ -1019,12 +1016,9 @@ async function runSEOAutomation() {
     try { 
       const specHints = extractSpecHints(targetProduct.body_html || '');
       newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords, specHints));
-      const productFull = await fetchProductById(targetProduct.id);
-      const imageUrl = productFull?.images?.[0]?.src || undefined;
-      const jsonLd = buildProductJsonLd({ title: targetProduct.title, description: newBodyHtml, imageUrl, price: targetProduct?.variants?.[0]?.price, url: `${BASE_SITE_URL}/products/${targetProduct.handle}` });
       const allProducts = await getProducts();
       const similar = buildSimilarProductsList(targetProduct, allProducts, 5);
-      newBodyHtml = injectSimilarProductsList(jsonLd + newBodyHtml, similar);
+      newBodyHtml = injectSimilarProductsList(newBodyHtml, similar);
       if (!/produse\s+similare[\s\S]*<ul>/i.test(newBodyHtml) && similar) {
         newBodyHtml += `\n<h2>Produse similare</h2>${similar}`;
       }
