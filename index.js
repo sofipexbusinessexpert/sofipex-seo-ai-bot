@@ -198,6 +198,28 @@ function stripLdJsonScripts(html) {
   }
 }
 
+function normalizeGeneratedHtml(input) {
+  try {
+    let s = String(input || '').trim();
+    s = s.replace(/```[a-z]*|```/gi, '').trim();
+    if (s.startsWith('{')) {
+      try {
+        const obj = JSON.parse(s);
+        if (obj && typeof obj === 'object') {
+          if (obj.new_content_html) return String(obj.new_content_html);
+          if (obj.html) return String(obj.html);
+        }
+      } catch (_) {
+        const m = s.match(/"new_content_html"\s*:\s*"([\s\S]*?)"\s*}/);
+        if (m) {
+          try { return JSON.parse(`"${m[1]}"`); } catch { return m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'); }
+        }
+      }
+    }
+    return s;
+  } catch { return String(input || ''); }
+}
+
 // === JSON-LD builders ===
 function buildProductJsonLd({ title, description, imageUrl, brand = 'Sofipex', price, currency = 'RON', availability = 'https://schema.org/InStock', url }) {
   const json = {
@@ -843,9 +865,10 @@ Returnează DOAR BLOCUL NOU ca HTML valid (începe cu <p>... descriere ...</p>):
       temperature: 0.3,
       max_tokens: 2200,
     });
-    let raw = (r.choices[0].message.content || '').replace(/```[a-z]*|```/g, '').trim();
-    if (/(<p|<h2|<ul|<dl|<li|<dt|<dd)/i.test(raw)) {
-      return raw;
+    let raw = (r.choices[0].message.content || '');
+    const html = normalizeGeneratedHtml(raw);
+    if (/(<p|<h2|<ul|<dl|<li|<dt|<dd)/i.test(html)) {
+      return html;
     }
     throw new Error('LLM did not return HTML');
   } catch (e) { 
