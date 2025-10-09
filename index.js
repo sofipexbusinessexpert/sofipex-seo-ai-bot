@@ -241,7 +241,7 @@ function buildArticleJsonLd({ title, description, imageUrl, author = 'Sofipex' }
 // === Shopify helpers for images ===
 async function fetchProductById(productId) {
   try {
-    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products/${productId}.json?fields=id,title,handle,images`, {
+    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products/${productId}.json?fields=id,title,handle,images,variants`, {
       headers: { 'X-Shopify-Access-Token': SHOPIFY_API },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -791,14 +791,19 @@ Ai mai jos descrierea existentă (HTML) inclusiv posibile specificații tehnice:
 """
 ${bodySnippet}
 """
-Instrucțiuni:
-1) Identifică și păstrează neschimbate specificațiile tehnice existente. NU le elimina și NU le rescrie. Dacă nu există o secțiune clară, creează una intitulată "Specificații Tehnice" folosind datele din text (păstrează valorile exacte). Evită DUPLICAREA acestei secțiuni dacă există deja.
-2) Creează un paragraf introductiv (<=300 cuvinte) care mapează beneficiile la atributele cheie (material, dimensiune, capacitate, grosime, temperatură, certificări) relevante pentru SEO și conversie.
-3) Adaugă o secțiune "Beneficii Cheie" (un <ul> cu 4-5 <li>) cu formulări naturale, incluzând sinonime/variații semantice (LSI) derivate din cuvintele din titlu și din specificații. Evită repetări forțate.
-4) Păstrează restul conținutului existent DUPĂ blocul nou.
-5) Conținutul trebuie să fie în română, să evite superlative generale și să integreze în mod natural cuvintele-cheie extrase din titlu. Evită H1 suplimentar în descriere; folosește <h2> pentru heading.
- 6) La final, adaugă o secțiune "Produse similare" cu o listă <ul> goală (placeholder) ce va fi completată dinamic de sistem.
-Returnează DOAR BLOCUL NOU (fără descrierea veche) ca HTML valid și compact: {"new_content_html": "<h2>${title}</h2><p>...</p><ul>...</ul>"}. JSON STRICT.`;
+Instrucțiuni (STRICT pentru descrierea ON-PAGE a produsului, NU articol de blog):
+1) Introducere: un singur paragraf scurt (max 120-150 cuvinte) orientat pe beneficii (material, capacitate, rezistență, utilizare, eco), natural, fără keyword stuffing.
+2) Beneficii cheie: listă <ul> cu 4–6 <li> concrete și specifice produsului.
+3) Specificații tehnice: listă <ul> cheie–valoare (ex. Dimensiuni, Capacitate, Material, Rezistență, Utilizare), preia valorile din textul existent. Nu inventa. Nu duplica dacă există deja o secțiune clară – atunci doar îmbunătățește-o.
+4) Utilizări recomandate: listă <ul> cu 3–5 contexte practice.
+5) Variante disponibile: listă <ul> goală (placeholder) – sistemul va popula linkuri către celelalte capacități.
+6) Întrebări frecvente (FAQ): listă <dl> cu 3–5 <dt>/<dd> întrebări și răspunsuri scurte, derivate din conținutul existent.
+7) Produse similare: listă <ul> goală (placeholder) – sistemul va popula 3–5 linkuri interne. Nu repeta produsul curent.
+Reguli:
+- Fără H1. Folosește <h2> pentru fiecare secțiune din lista de mai sus, în ordinea dată.
+- Fără repetarea titlului în mod inutil. Corectează diacriticele.
+- Nu amesteca în text capacități/variante; detaliile rămân ale produsului curent.
+Returnează DOAR BLOCUL NOU ca HTML valid (începe cu <h2>Introducere</h2>): {"new_content_html": "<h2>Introducere</h2><p>...</p><h2>Beneficii cheie</h2><ul>...</ul><h2>Specificatii tehnice</h2><ul>...</ul><h2>Utilizari recomandate</h2><ul>...</ul><h2>Variante disponibile</h2><ul></ul><h2>Intrebari frecvente</h2><dl>...</dl><h2>Produse similare</h2><ul></ul>"}. JSON STRICT.`;
   try {
     const r = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.5, max_tokens: 3000, });
     const parsed = JSON.parse(r.choices[0].message.content.replace(/```json|```/g, "").trim());
