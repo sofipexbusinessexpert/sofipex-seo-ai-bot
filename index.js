@@ -494,6 +494,7 @@ async function prepareNextOnPageProposal() {
     const targetKeyword = midScores[0] || scores.find(s => Number(s.score) < 80) || { keyword: KEYWORDS[0] };
 
     const targetProduct = await chooseNextProduct(products);
+    const oldDescriptionOriginal = stripAiBlock(targetProduct.body_html || '');
     const oldDescriptionClean = ''; // suprascrie complet (nu păstra text vechi)
     const proposedSeo = await runWithRetry(() => generateSEOContent(targetProduct.title, oldDescriptionClean || ""));
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
@@ -1014,7 +1015,7 @@ async function runSEOAutomation() {
     proposedOptimization = {
         productId: targetProduct.id,
         productTitle: targetProduct.title,
-        oldDescription: oldDescriptionClean,
+        oldDescription: oldDescriptionOriginal,
         newDescription: newBodyHtml,
         keyword: targetKeyword.keyword,
         timestamp: dateStr,
@@ -1041,7 +1042,8 @@ async function runSEOAutomation() {
       proposedSeoB.meta_title = alt.meta_title;
       proposedSeoB.meta_description = alt.meta_description;
     } catch {}
-    const oldDescriptionClean = stripAiBlock(targetProduct.body_html || '');
+    const oldDescriptionOriginal = stripAiBlock(targetProduct.body_html || '');
+    const oldDescriptionClean = ''; // suprascrie complet (nu păstra text vechi)
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
     try { 
@@ -1062,7 +1064,7 @@ async function runSEOAutomation() {
     proposedOptimization = {
       productId: targetProduct.id,
       productTitle: targetProduct.title,
-      oldDescription: oldDescriptionClean,
+      oldDescription: oldDescriptionOriginal,
       newDescription: newBodyHtml,
       keyword: KEYWORDS[0],
       timestamp: new Date().toLocaleString('ro-RO'),
