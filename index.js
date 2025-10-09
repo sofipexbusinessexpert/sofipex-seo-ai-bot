@@ -586,7 +586,7 @@ async function getProducts() {
   } catch (e) { return []; }
 }
 
-function buildSimilarProductsList(currentProduct, allProducts, maxItems = 5) {
+function buildSimilarProductsList(currentProduct, allProducts, maxItems = 3) {
   try {
     const currentTokens = new Set(extractKeywordsFromTitle(currentProduct.title).split(',').map(s => s.trim()).filter(Boolean));
     const candidates = allProducts.filter(p => p.id !== currentProduct.id);
@@ -595,8 +595,9 @@ function buildSimilarProductsList(currentProduct, allProducts, maxItems = 5) {
       let overlap = 0; tokens.forEach(t => { if (currentTokens.has(t)) overlap++; });
       return { p, score: overlap };
     }).sort((a,b) => b.score - a.score);
-    const top = scored.filter(x => x.score > 0).slice(0, maxItems).map(x => x.p);
-    const items = top.map(p => `<li><a href="${BASE_SITE_URL}/products/${p.handle}" rel="nofollow">${sanitizeMetaField(p.title, 120)}</a></li>`).join('');
+    let top = scored.filter(x => x.score > 0).slice(0, maxItems).map(x => x.p);
+    if (top.length === 0) top = scored.slice(0, maxItems).map(x => x.p);
+    const items = top.map(p => `<li><a href="${BASE_SITE_URL}/products/${p.handle}">${sanitizeMetaField(p.title, 120)}</a></li>`).join('');
     return `<ul>${items}</ul>`;
   } catch {
     return '';
