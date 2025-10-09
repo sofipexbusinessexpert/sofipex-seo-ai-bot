@@ -169,7 +169,7 @@ function stripHtmlAndWhitespace(input) {
 function clampText(input, maxLen) {
   const s = String(input || '');
   if (s.length <= maxLen) return s;
-  return s.slice(0, maxLen - 1).trim() + '…';
+  return s.slice(0, maxLen).trim();
 }
 function sanitizeMetaField(text, maxLen) {
   return clampText(stripHtmlAndWhitespace(text), maxLen);
@@ -505,8 +505,8 @@ async function prepareNextOnPageProposal() {
     }
 
     const dateStr = new Date().toLocaleString("ro-RO");
-    const metaTitleCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '', 60);
-    const metaDescCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || oldDescriptionClean || targetProduct.title || '', 160);
+    const metaTitleCurrent = String(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '');
+    const metaDescCurrent = String(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || '' || targetProduct.title || '');
 
     proposedOptimization = {
       productId: targetProduct.id,
@@ -938,8 +938,8 @@ async function runSEOAutomation() {
     }
 
     // Extrage meta curente din metafields, cu fallback
-    const metaTitleCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '', 60);
-    const metaDescCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || oldDescriptionClean || targetProduct.title || '', 160);
+    const metaTitleCurrent = String(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '');
+    const metaDescCurrent = String(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || '' || targetProduct.title || '');
 
     proposedOptimization = {
         productId: targetProduct.id,
@@ -1295,7 +1295,7 @@ async function dashboardHTML() {
         <div style="display:flex; gap:12px;">
           <div style="flex:1;">
             <label style="font-weight:bold;">Descriere veche (completă)</label>
-            <textarea style="width:100%; height:280px; font-family:monospace; font-size:12px;" readonly>${proposedOptimization.oldDescription || 'N/A'}</textarea>
+            <textarea style="width:100%; height:280px; font-family:monospace; font-size:12px;" readonly>${(proposedOptimization.oldDescription ?? '') || 'N/A'}</textarea>
           </div>
           <div style="flex:1;">
             <label style="font-weight:bold;">Descriere nouă propusă (completă)</label>
