@@ -220,6 +220,26 @@ function normalizeGeneratedHtml(input) {
   } catch { return String(input || ''); }
 }
 
+function removeNaSpecItems(html) {
+  try {
+    let s = String(html || '');
+    const lower = s.toLowerCase();
+    const h2Match = lower.match(/<h2[^>]*>\s*specificatii\s+tehnice\s*<\/h2>/i);
+    if (!h2Match) return s;
+    const h2Index = lower.indexOf(h2Match[0]);
+    const afterH2 = h2Index + h2Match[0].length;
+    const ulStart = lower.indexOf('<ul', afterH2);
+    if (ulStart === -1) return s;
+    const ulEnd = lower.indexOf('</ul>', ulStart);
+    if (ulEnd === -1) return s;
+    const before = s.slice(0, ulStart);
+    const ulBlock = s.slice(ulStart, ulEnd + 5);
+    const after = s.slice(ulEnd + 5);
+    const cleanedUl = ulBlock.replace(/<li[^>]*>[^<]*n\/?a[^<]*<\/li>/gi, '').replace(/<li[^>]*>\s*na\s*<\/li>/gi, '');
+    return before + cleanedUl + after;
+  } catch { return String(html || ''); }
+}
+
 function removeSimilarSection(html) {
   try {
     let s = String(html || '');
@@ -1003,11 +1023,14 @@ async function runSEOAutomation() {
         const specHints = extractSpecHints(targetProduct.body_html || '');
         newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords, specHints));
     newBodyHtml = stripLdJsonScripts(newBodyHtml);
+    newBodyHtml = removeNaSpecItems(newBodyHtml);
     const allProducts = await getProducts();
     const similar = buildSimilarProductsList(targetProduct, allProducts, 3);
     // Always replace or add a clean 'Produse similare' section
     newBodyHtml = removeSimilarSection(newBodyHtml);
-    newBodyHtml += `\n<h2>Produse similare</h2>${similar || '<ul></ul>'}`;
+    if (similar) {
+      newBodyHtml += `\n<h2>Produse similare</h2>${similar}`;
+    }
     } catch (e) {
         console.error("🔴 ESEC FINAL: On-Page patch nu a putut fi generat.");
     }
@@ -1054,10 +1077,13 @@ async function runSEOAutomation() {
       const specHints = extractSpecHints(targetProduct.body_html || '');
       newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords, specHints));
       newBodyHtml = stripLdJsonScripts(newBodyHtml);
+      newBodyHtml = removeNaSpecItems(newBodyHtml);
       const allProducts = await getProducts();
       const similar = buildSimilarProductsList(targetProduct, allProducts, 3);
       newBodyHtml = removeSimilarSection(newBodyHtml);
-      newBodyHtml += `\n<h2>Produse similare</h2>${similar || '<ul></ul>'}`;
+      if (similar) {
+        newBodyHtml += `\n<h2>Produse similare</h2>${similar}`;
+      }
     } catch {}
     const metaTitleCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '', 60);
     const metaDescCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || oldDescriptionClean || targetProduct.title || '', 160);
