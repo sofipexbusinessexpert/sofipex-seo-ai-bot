@@ -541,7 +541,7 @@ async function getRecentTrends(days = 30) {
 /* === 🛍️ Shopify Utils === */
 async function getProducts() {
   try {
-    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products.json?fields=id,title,body_html,metafields,image&limit=250`, { headers: { "X-Shopify-Access-Token": SHOPIFY_API }, });
+    const res = await fetch(`https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/products.json?fields=id,title,handle,body_html,metafields,image,variants&limit=250`, { headers: { "X-Shopify-Access-Token": SHOPIFY_API }, });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const allProducts = data.products || [];
@@ -553,6 +553,65 @@ async function getProducts() {
     });
     return products;
   } catch (e) { return []; }
+}
+
+function buildSimilarProductsList(currentProduct, allProducts, maxItems = 5) {
+  try {
+    const currentTokens = new Set(extractKeywordsFromTitle(currentProduct.title).split(',').map(s => s.trim()).filter(Boolean));
+    const candidates = allProducts.filter(p => p.id !== currentProduct.id);
+    const scored = candidates.map(p => {
+      const tokens = new Set(extractKeywordsFromTitle(p.title).split(',').map(s => s.trim()).filter(Boolean));
+      let overlap = 0; tokens.forEach(t => { if (currentTokens.has(t)) overlap++; });
+      return { p, score: overlap };
+    }).sort((a,b) => b.score - a.score);
+    const top = scored.filter(x => x.score > 0).slice(0, maxItems).map(x => x.p);
+    const items = top.map(p => `<li><a href="${BASE_SITE_URL}/products/${p.handle}" rel="nofollow">${sanitizeMetaField(p.title, 120)}</a></li>`).join('');
+    return `<ul>${items}</ul>`;
+  } catch {
+    return '';
+  }
+}
+
+function injectSimilarProductsList(html, similarUlHtml) {
+  if (!similarUlHtml) return html;
+  try {
+    const markerIndex = html.toLowerCase().indexOf('produse similare');
+    if (markerIndex === -1) return html + `\n<h2>Produse similare</h2>${similarUlHtml}`;
+    // Replace first <ul> after marker
+    const after = html.slice(markerIndex);
+    const ulStart = after.indexOf('<ul');
+    if (ulStart === -1) {
+      return html + `\n${similarUlHtml}`;
+    }
+    const absUlStart = markerIndex + ulStart;
+    const ulEnd = html.indexOf('</ul>', absUlStart);
+    if (ulEnd === -1) return html + `\n${similarUlHtml}`;
+    return html.slice(0, absUlStart) + similarUlHtml + html.slice(ulEnd + 5);
+  } catch {
+    return html;
+  }
+}
+
+function buildFAQJsonLd(pairs) {
+  const json = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: (pairs || []).map(([q,a]) => ({ '@type': 'Question', name: sanitizeMetaField(q, 160), acceptedAnswer: { '@type': 'Answer', text: sanitizeMetaField(a, 2000) } }))
+  };
+  return `<script type="application/ld+json">${JSON.stringify(json)}</script>`;
+}
+
+function buildDefaultFaqPairs(title, bodyText) {
+  const intro = sanitizeMetaField(bodyText || '', 300);
+  const pairs = [
+    [ `Ce este ${title}?`, intro || `Produs ${title} pentru ambalare profesională.` ],
+    [ `Care sunt specificațiile principale pentru ${title}?`, 'Consultați secțiunea „Specificații Tehnice” din descrierea produsului.' ],
+    [ `În ce contexte se utilizează ${title}?`, 'Ideal pentru HoReCa, livrări, evenimente și utilizări alimentare.' ],
+  ];
+  if (/bio|biodegradabil|compostabil/i.test(title)) {
+    pairs.push([ `Este ${title} biodegradabil?`, 'Da, produsul este conceput pentru a fi biodegradabil/compostabil conform mențiunilor producătorului.' ]);
+  }
+  return pairs;
 }
 async function updateProduct(id, updates) {
   try {
@@ -860,7 +919,9 @@ async function runSEOAutomation() {
         const productFull = await fetchProductById(targetProduct.id);
         const imageUrl = productFull?.images?.[0]?.src || undefined;
         const jsonLd = buildProductJsonLd({ title: targetProduct.title, description: newBodyHtml, imageUrl, price: targetProduct?.variants?.[0]?.price, url: `${BASE_SITE_URL}/products/${targetProduct.handle}` });
-        newBodyHtml = jsonLd + newBodyHtml;
+        const allProducts = await getProducts();
+        const similar = buildSimilarProductsList(targetProduct, allProducts, 5);
+        newBodyHtml = injectSimilarProductsList(jsonLd + newBodyHtml, similar);
     } catch (e) {
         console.error("🔴 ESEC FINAL: On-Page patch nu a putut fi generat.");
     }
@@ -907,7 +968,9 @@ async function runSEOAutomation() {
       const productFull = await fetchProductById(targetProduct.id);
       const imageUrl = productFull?.images?.[0]?.src || undefined;
       const jsonLd = buildProductJsonLd({ title: targetProduct.title, description: newBodyHtml, imageUrl, price: targetProduct?.variants?.[0]?.price, url: `${BASE_SITE_URL}/products/${targetProduct.handle}` });
-      newBodyHtml = jsonLd + newBodyHtml;
+      const allProducts = await getProducts();
+      const similar = buildSimilarProductsList(targetProduct, allProducts, 5);
+      newBodyHtml = injectSimilarProductsList(jsonLd + newBodyHtml, similar);
     } catch {}
     const metaTitleCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'title_tag')?.value || targetProduct.title || '', 60);
     const metaDescCurrent = sanitizeMetaField(targetProduct.metafields?.find(m => m.namespace === 'global' && m.key === 'description_tag')?.value || oldDescriptionClean || targetProduct.title || '', 160);
