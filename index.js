@@ -15,6 +15,8 @@ import cron from "node-cron";
 import sgMail from "@sendgrid/mail";
 import 'dotenv/config';
 import { normalizeGeneratedHtml, stripLdJsonScripts, removeNaSpecItems, removeSimilarSection, buildSimilarProductsList } from './lib/html.js';
+import { getAuth as getSheetsAuth, ensureHeaders, saveToSheets, appendManyToSheets } from './lib/sheets.js';
+import { getStateValue, setStateValue, loadLocalStateFromFile, saveLocalStateToFile } from './lib/state.js';
 
 /* === 🔐 Variabile === */
 const {
@@ -46,25 +48,7 @@ app.set('trust proxy', 1);
 
 let lastRunData = { trends: [], scores: [], gaData: [], selectedTrend: null };
 let proposedOptimization = null;
-let localState = {};
 let pendingArticlePreview = null;
-const STATE_FILE_PATH = process.env.STATE_FILE_PATH || './state.json';
-let localStateLoaded = false;
-
-async function loadLocalStateFromFile() {
-  if (localStateLoaded) return;
-  try {
-    const data = await fs.readFile(STATE_FILE_PATH, 'utf8');
-    const json = JSON.parse(data);
-    if (json && typeof json === 'object') { localState = { ...localState, ...json }; }
-  } catch {}
-  localStateLoaded = true;
-}
-async function saveLocalStateToFile() {
-  try {
-    await fs.writeFile(STATE_FILE_PATH, JSON.stringify(localState, null, 2), 'utf8');
-  } catch {}
-}
 
 // === CSRF & Password utils ===
 function generateToken(bytes = 32) {
@@ -134,45 +118,7 @@ async function runWithRetry(fn, maxRetries = 3) {
     }
 }
 
-/* === 📥 Google Sheets Utils === */
-async function getAuth(scopes) { return new google.auth.GoogleAuth({ keyFile: GOOGLE_KEY_PATH, scopes, }); }
-async function ensureHeaders(tab, headers) {
-  try {
-    if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) return;
-    const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
-    const sheets = google.sheets({ version: "v4", auth });
-    const res = await sheets.spreadsheets.values.get({ range: `${tab}!1:1`, spreadsheetId: GOOGLE_SHEETS_ID, });
-    const firstRow = res.data.values?.[0] || [];
-    if (firstRow.join(',').trim() !== headers.join(',').trim()) {
-      await sheets.spreadsheets.values.update({ spreadsheetId: GOOGLE_SHEETS_ID, range: `${tab}!A1`, valueInputOption: "RAW", requestBody: { values: [headers] }, });
-      console.log(`✅ Headers corrected (UPDATE) for ${tab}`);
-    } else { console.log(`✅ Headers already correct for ${tab}`); }
-  } catch (err) { console.error(`❌ Headers setup error for ${tab}:`, err.message); }
-}
-async function saveToSheets(tab, values) {
-  try {
-    if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) return;
-    const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
-    const sheets = google.sheets({ version: "v4", auth });
-    await sheets.spreadsheets.values.append({ spreadsheetId: GOOGLE_SHEETS_ID, range: `${tab}!A:A`, valueInputOption: "RAW", requestBody: { values: [values] }, });
-    console.log(`✅ Sheets ${tab}: Data appended`);
-  } catch (err) { console.error(`❌ Sheets ${tab} error:`, err.message); }
-}
-
-async function appendManyToSheets(tab, rows) {
-  try {
-    if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) return;
-    if (!rows || rows.length === 0) return;
-    const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
-    const sheets = google.sheets({ version: "v4", auth });
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: GOOGLE_SHEETS_ID,
-      range: `${tab}!A:A`,
-      valueInputOption: "RAW",
-      requestBody: { values: rows }
-    });
-  } catch (err) { console.error(`❌ Sheets batch append error for ${tab}:`, err.message); }
-}
+/* === 📥 Google Sheets Utils moved to lib/sheets.js === */
 
 // === Meta utils: strip HTML and clamp lengths ===
 function stripHtmlAndWhitespace(input) {
@@ -356,45 +302,7 @@ function createRateLimiter({ windowMs = 60000, max = 10 } = {}) {
 const rlStrict = createRateLimiter({ windowMs: 60000, max: 5 });
 const rlMedium = createRateLimiter({ windowMs: 60000, max: 12 });
 
-// === App State (persisted in Google Sheets 'State' tab, with in-memory fallback) ===
-async function getStateValue(key) {
-  try {
-    await loadLocalStateFromFile();
-    if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) return localState[key];
-    const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
-    const sheets = google.sheets({ version: "v4", auth });
-    const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEETS_ID, range: "State!A:B" });
-    const rows = res.data.values || [];
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i][0] === key) return rows[i][1];
-    }
-    return undefined;
-  } catch (e) {
-    return localState[key];
-  }
-}
-async function setStateValue(key, value) {
-  try {
-    await loadLocalStateFromFile();
-    if (!GOOGLE_KEY_PATH || !GOOGLE_SHEETS_ID) { localState[key] = String(value); await saveLocalStateToFile(); return; }
-    const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
-    const sheets = google.sheets({ version: "v4", auth });
-    const res = await sheets.spreadsheets.values.get({ spreadsheetId: GOOGLE_SHEETS_ID, range: "State!A:B" });
-    const rows = res.data.values || [];
-    let rowIndex = -1;
-    for (let i = 1; i < rows.length; i++) {
-      if (rows[i][0] === key) { rowIndex = i + 1; break; }
-    }
-    if (rowIndex === -1) {
-      await sheets.spreadsheets.values.append({ spreadsheetId: GOOGLE_SHEETS_ID, range: "State!A:B", valueInputOption: "RAW", requestBody: { values: [[key, String(value)]] } });
-    } else {
-      await sheets.spreadsheets.values.update({ spreadsheetId: GOOGLE_SHEETS_ID, range: `State!B${rowIndex}`, valueInputOption: "RAW", requestBody: { values: [[String(value)]] } });
-    }
-  } catch (e) {
-    localState[key] = String(value);
-    await saveLocalStateToFile();
-  }
-}
+// === App State moved to lib/state.js ===
 
 // === Persist/restore proposed on-page optimization ===
 async function persistProposedOptimization() {
@@ -557,7 +465,7 @@ async function prepareNextOnPageProposal() {
 }
 async function getRecentTrends(days = 30) {
   try {
-    const auth = await getAuth(["https://www.googleapis.com/auth/spreadsheets"]);
+    const auth = await getSheetsAuth(["https://www.googleapis.com/auth/spreadsheets"]);
     const sheets = google.sheets({ version: "v4", auth });
     const res = await sheets.spreadsheets.values.get({ range: "Trenduri!A:C", spreadsheetId: GOOGLE_SHEETS_ID, });
     const rows = res.data.values || [];
