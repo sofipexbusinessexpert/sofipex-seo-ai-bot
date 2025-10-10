@@ -999,8 +999,18 @@ async function applyProposedOptimization(proposal) {
         // Ensure meta fields are set/clamped during approval to prevent Shopify from inferring from body
         const safeTitle = sanitizeMetaField(proposal.productTitle || '', 60);
         const safeDesc = sanitizeMetaField(proposal.proposedMetaDescription || proposal.newDescription || proposal.oldDescription || proposal.productTitle || '', 160);
-        // Normalize generated HTML to avoid JSON wrappers and strip any ld+json
-        const cleanHtml = stripLdJsonScripts(normalizeGeneratedHtml(proposal.newDescription));
+        // Normalize and sanitize final HTML before applying
+        let cleanHtml = stripLdJsonScripts(normalizeGeneratedHtml(proposal.newDescription));
+        cleanHtml = removeNaSpecItems(cleanHtml);
+        cleanHtml = removeSimilarSection(cleanHtml);
+        try {
+          const productsAll = await getProducts();
+          const current = productsAll.find(p => String(p.id) === String(proposal.productId)) || null;
+          if (current) {
+            const similar = buildSimilarProductsList(current, productsAll, 3);
+            if (similar) cleanHtml += `\n<h2>Produse similare</h2>${similar}`;
+          }
+        } catch {}
         const updates = { body_html: wrapAiBlock(cleanHtml), meta_title: proposal.proposedMetaTitle || safeTitle, meta_description: safeDesc };
         await updateProduct(proposal.productId, updates); 
         await addOptimizedProductId(proposal.productId);
