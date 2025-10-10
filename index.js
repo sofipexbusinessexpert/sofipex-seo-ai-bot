@@ -436,7 +436,18 @@ async function prepareNextOnPageProposal() {
     const titleKeywords = extractKeywordsFromTitle(targetProduct.title);
     let newBodyHtml = oldDescriptionClean;
     try {
-      newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords));
+      // extrage indicii pentru specificații din descrierea veche
+      const specHints = extractSpecHints(targetProduct.body_html || '');
+      newBodyHtml = await runWithRetry(() => generateProductPatch(targetProduct.title, oldDescriptionClean, titleKeywords, specHints));
+      // normalizează & curăță output-ul LLM
+      newBodyHtml = stripLdJsonScripts(newBodyHtml);
+      newBodyHtml = removeNaSpecItems(newBodyHtml);
+      // construiește și inserează lista de produse similare
+      const similar = buildSimilarProductsList(targetProduct, products, 3);
+      newBodyHtml = removeSimilarSection(newBodyHtml);
+      if (similar) {
+        newBodyHtml += `\n<h2>Produse similare</h2>${similar}`;
+      }
     } catch (e) {
       console.error("🔴 Nu s-a putut genera propunerea On-Page pentru produsul următor.");
     }
